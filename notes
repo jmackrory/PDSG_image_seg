@@ -1,0 +1,48 @@
+Notes:
+
+Load up .mat file and check that output looked good.
+(particularly the counts of objects per image)
+John managed to extract the names from the files.
+I want to check if there also included the types of objects in each image.
+
+Two - sampling.
+Can I use those paths to sample the images. 
+(I'm thinking of first a random sample of around 5% of the data.  
+
+Three - presentation
+
+Thank sponsors
+
+Thank regulars for helping pull together and organize data
+Matt B., John B., Julie, Josh, Kenny, Zach, Isil, Tal
+
+introduce problem 
+ - image segmentation  (why? Prepration step for more complicated work. Simplify recognition.)
+
+introduce data
+ - MIT ADE20K set from 2017 (website)
+ - images with handmade segmentation and annotations.
+ - various sizes, topics.
+
+Format 
+ JPG initial image
+ png segments
+ (text annotations)
+
+Providing:
+Tiny, Small, Medium sets available at dive-into.info
+Tiny Set  (1MB)    - smallest, simplest images
+Small Set (20MB)   - 
+Medium set (100MB) - 1k images, various sizes
+Full dataset       - PLEASE ONLY DOWNLOAD AT HOME
+
+
+
+
+Approaches:
+Clustering
+Support Vector Machine
+Neural Networks
+
+
+Look at Matt's tiny set.
