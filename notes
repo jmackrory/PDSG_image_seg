@@ -46,3 +46,11 @@ Neural Networks
 
 
 Look at Matt's tiny set.
+
+
+Sizing: There's around 20k images.
+25% are smaller than 320x240
+50% are smaller than 640x480.
+Another quarter are in the 1600x1200 bucket.
+
+And a small fraction are larger than 3200x2400

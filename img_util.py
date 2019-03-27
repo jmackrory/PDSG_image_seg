@@ -4,6 +4,7 @@ import re
 
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
 Hlist=[0,240,480,1200,2400,10000]
 Wlist=[0,320,640,1600,3200,20000]
@@ -42,7 +43,10 @@ def make_indx_df(indx_list):
     return indx_df
 
 def augment_indx_df(indx_df):
-
+    """augments the dataframe with bucketing based on sizes, and a random k-fold.
+    Buckets according to smallest frame sie that will contain the image.
+    Buckets scale according to factor of 2, with approximately equal contents.  
+    """
     #add sizing batches
     Nexample = len(indx_df)
     msk_arr = np.zeros((Nexample,Nbucket))
@@ -60,10 +64,8 @@ def augment_indx_df(indx_df):
         print("Iter {}, Width bounds: {}, {}, Height bounds: {}, {}".format(
             i,Wlist[i],Wlist[i+1],Hlist[i],Hlist[i+1]))
         #Width upper/lower bounds
-
         box0 = (width <= Wlist[i]) & (height <= Hlist[i])
         box1 = (width <= Wlist[i+1]) & (height <= Hlist[i+1])
-
         msk_arr[:,i] = np.logical_and(~box0, box1)
         
         # width_cond0 =  (Wlist[i] < width )
@@ -80,12 +82,30 @@ def augment_indx_df(indx_df):
     msk_arr=msk_arr.astype(bool)
     indx_df['size_bucket']=np.zeros(Nexample)
     for i in range(Nbucket):
-        indx_df.loc[msk_arr[:,i],'size_group']=i
+        indx_df.loc[msk_arr[:,i],'size_bucket']=i
     #add random label for subsetting.
-    
+    print('why?')
     indx_df['Fold']=np.random.randint(low=0,high=5,size=Nexample)
     return msk_arr
 
+def plot_sizes(indx_df,bucket=0):
+    msk=indx_df['size_bucket']==bucket
+    w=indx_df.loc[msk]['width']
+    h=indx_df.loc[msk]['height']
+    plt.plot(w,h,'.')
+    plt.show()
+
+def plot_counts(indx_df,bucket=None):
+    if bucket==None:
+        msk = [True]*len(indx_df)
+    else:
+        msk=indx_df['size_bucket']==bucket
+    sub_df=indx_df.loc[msk]
+    class_counts=sub_df.groupby('class').apply(len)
+    class_counts=class_counts.sort_values(ascending=False)
+    class_counts.iloc[:20].plot.barh()
+    plt.show()
+    return class_counts
 
 def load_img_indx_df(index_str='index/train_indx.csv'):
     """Load Python DataFrame with images including path, size.
@@ -93,12 +113,14 @@ def load_img_indx_df(index_str='index/train_indx.csv'):
     """
     df=pd.read_csv(index_str)
     return df
-    
 
 def save_img_indx_df(df,index_str='index/train_indx.csv'):
     df.to_csv(indx_df,index=False)
 
-    
+
+#get counts of objects in images.
+
+#look at most popular classes.
 
 
     
