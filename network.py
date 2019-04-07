@@ -97,7 +97,7 @@ class kerasUNet(object):
         keras.backend.clear_session()
         self.build_network(self.param.network_arch)
 
-    def load_network_param:
+    def load_network_param(self):
         raise NotImplementedError
 
     def build_network(self):
@@ -130,7 +130,7 @@ class kerasUNet(object):
                            metrics=['IOU'])
 
 
-    def pixelwise_crossentropy(Ytrue,Ypred):
+    def pixelwise_crossentropy(self,Ytrue,Ypred):
         """
         compute pixelwise cross-entropy across most popular classes example by example.
 
@@ -142,7 +142,7 @@ class kerasUNet(object):
         R = Ytrue[:,:,0]
         G = Ytrue[:,:,1]
 
-        ytrue_class= (R//10)*255 + G
+        ytrue_class= (R//10)*256 + G
         #get classes_presenre
         classes_present = set(ytrue_class.reshape(-1))
         cost=0
@@ -159,35 +159,41 @@ class kerasUNet(object):
                 cost += K.mean(K.log(1-ypred_c))/(Nclasses)
         return cost
         
-    def _get_X_y_batch(self,size_bucket=0,fold=0):
-
-        #pick a random bin:
-
-        rand_bin = np.random.randint(low=0,high=Nbin)
-        size = bin_size(rand_bin)
-
-        count=0
-
+    def _get_X_y_batch(self,ind,size_bucket=0):
+        """given list of indices and a corresponding bucket,
+        returns a batch for training.  
+        """
         Wtarget=util.Wlist[size_bucket]
         Htarget=util.Hlist[size_bucket]
-        
-        X=K.zeros([Nbatch, Wtarget, Htarget,3])
-        i=0
-        while (i< len(indx_df)):
+
+        Nb=len(ind)
+        X=K.zeros([ind, Wtarget, Htarget,3])
+        for j,i in enumerate(ind):
             row = self.indx.iloc[i]
-            j = i % self.param.Nbatch
             X_name= '/'.join([row['dir'],row['fname']])
             y_name= X_name[:-4]+'_seg.png'
             X[j]=image.load_img(X_name, target_size=(Htarget,Wtarget))
             y[j]=image.load_img(y_name, target_size=(Htarget,Wtarget))
-            if (j == (self.param.Nbatch-1)):
-               return X,y
-        #catch last iteration       
         return X,y
 
-        
+
+    def get_random_train_bucket(self):
+        """generator to pick a random allowed_bucket using relative sizes
+        """
+        #list of tuples with key and number in each bucket.
+        N_in_bucket=[(key, len(val)) for key,val in self.train_ind.items()]
+        vals=[x[1] for x in N_in_bucket]
+        #maps those sizes to [0,1) interval to randomly select one
+        rand_boundary=np.cumsum(vals)/np.sum(vals)
+        while True:
+            r=np.random.random()
+            for i,v in enumerate(vals):
+                if (r<v):
+                    yield N_in_bucket[i][0] 
+
+    
     #Why generator? Easier to implement early stopping.
-    def rand_batch_generator(self,X,y,vec):
+    def rand_train_batch_generator(self):
         """
         Generator to make random batches of data.
         Intended for use in training to endlessly
@@ -201,28 +207,31 @@ class kerasUNet(object):
         yv - corresponding subset of labels.
         """
         while True:
-            ind_sub=np.random.randint(low=0,high=len(y),
-                                      size=self.param.batch_size)
-            yield self._get_X_y_batch(X,y,ind_sub,vec)
+            size_bucket=self.get_random_train_bucket()
+            ind_sub=np.random.choice(self.train_list[size_bucket],
+                                     size=self.param.batch_size)
+            yield self._get_X_y_batch(ind_sub,size_bucket)
 
         
-    def det_batch_generator(self,X,y,vec):
+    def det_batch_generator(self):
         """det_batch_generator
         Load deterministic batch generator.
         Intended for use with inference/prediction
         to deterministically loop over data once. 
         """
         Nb=self.param.batch_size
-        i0=0
-        i1=Nb
-        while i1<len(y):
-            ind_sub=np.arange(i0,i1)
-            yield self._get_X_y_batch(X,y,ind_sub,vec)
-            i0=i1
-            i1+=Nb
-        #Last iter    
-        ind_sub=np.arange(i0,len(y))        
-        yield self._get_X_y_batch(X,y,ind_sub,vec)
+        for bucket,ind_list in self.train_list.items():
+            N_in_bucket=len(ind_list)
+            i0=0
+            i1=Nb
+            while i1<len(ind_list):
+                ind_sub=np.arange(i0,i1)
+                yield self._get_X_y_batch(ind_sub,bucket)
+                i0=i1
+                i1+=Nb
+            #Last iter    
+            ind_sub=np.arange(i0,len(y))        
+            yield self._get_X_y_batch(ind_sub,bucket)
             
     def train_network(self,X,y,vec):
         """train_network(self,X,y,vec)
@@ -236,7 +245,7 @@ class kerasUNet(object):
         """
         
         self.model.fit_generator(
-            self.rand_batch_generator(X,y,vec),
+            self.rand_batch_generator(),
             epochs=self.param.Nepoch,
             steps_per_epoch=self.param.steps)
 
@@ -250,7 +259,7 @@ class kerasUNet(object):
         """
         Nsteps=np.ceil(len(y)/self.param.batch_size)
         pred=self.model.predict_generator(
-            self.det_batch_generator(X,y,vec),steps=Nsteps)
+            self.det_batch_generator(),steps=Nsteps)
         return pred
     
     def evaluate(self,X,y,vec):
@@ -265,7 +274,7 @@ class kerasUNet(object):
         """
         Nsteps=np.ceil(len(y)/self.param.batch_size)
         eval_scores=self.model.evaluate_generator(
-            self.det_batch_generator(X,y,vec),steps=Nsteps)
+            self.det_batch_generator(),steps=Nsteps)
         return eval_scores
 
     def save_model(self,path_base):
@@ -298,6 +307,5 @@ Training - loop over whole dataset, building batches for allowed size
 
 """
 
-        
-
-               
+    
+    
