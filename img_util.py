@@ -2,6 +2,7 @@ import subprocess
 from os import walk
 import re
 
+import imageio
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -95,7 +96,6 @@ def plot_counts(indx_df,bucket=None):
     plt.show()
     return class_counts
 
-
 def load_img_indx_df(index_str='index/train_indx.csv'):
     """Load Python DataFrame with images including path, size.
     Returns pandas DataFrame.
@@ -104,12 +104,62 @@ def load_img_indx_df(index_str='index/train_indx.csv'):
     return df
 
 def load_object_index_df(file_name='index/ADE20K_index_object.csv'):
-    return pd.read_csv(file_name)
+    df=pd.read_csv(file_name)
+    return df.iloc[:,:5]
 
 
 def save_img_indx_df(df,index_str='index/train_indx.csv'):
     df.to_csv(index_str,index=False)
     return None
+
+
+def get_image(indx_df,num=0):
+    img_dir=indx_df.loc[num,'dir']
+    img_name=indx_df.loc[num,'fname']
+    jpeg_name='/'.join([img_dir,img_name])
+    png_name= jpeg_name[:-4]+'_seg.png'
+    img_jpg=imageio.imread(jpeg_name)
+    img_png=imageio.imread(png_name)    
+    return img_jpg, img_png
+
+def get_classes(img):
+    """compute mapping from R/G to class number used in object_df"""
+    classes=256.0*(img[:,:,0])//10  + img[:,:,1]
+    return classes
+
+
+def get_training_lists(indx_df,size_buckets=[0,1],val_fold=0):
+    """
+    given desired buckets (0,1,2,3,4) returns a set of lists
+    of filenames for each bucket
+
+    Return train_files: list of lists of files within each desired size_bucket
+ 
+    """
+    train_ind={}
+    val_ind={}
+    val_msk = indx_df['fold']==val_fold
+    #irange=np.arange(len(indx_df))
+    irange = indx_df.index
+    for size in set(size_buckets):
+        size_msk = (indx_df['size_bucket']==size)
+        train_ind[size](irange[size_msk & (~val_msk)])
+        val_ind[size](irange[size_msk & (val_msk)])
+    return train_ind,val_ind
+    
+def get_common_class_indx(object_df,ispart_frac=0.5,Nclass=50):
+    #try to consider big features first.  
+    msk= object_df['proportionClassIsPart'] < ispart_frac
+    ind=object_df[msk]['Index'].values
+    return ind[:Nclass]
+
+def get_counts_match(object_df,string,n=10):
+    """gets rows where an exact match occurs in the name
+    e.g. string=sea will not match seat or sea boat.
+    """
+    msk=object_df['objectnames'].str.match('^{}$'.format(string))
+    return object_df[msk].iloc[:n]
+
 
 #get counts of objects in images.
 
@@ -119,4 +169,7 @@ if __name__=="__main__":
     indx_df=load_img_indx_df()
     augment_indx_df(indx_df)
     indx_df.sort_values(['fold','size_bucket'],inplace=True)
+    #why? why is this a special separate function? who thought this was a good idea?
+    indx_df.reset_index(inplace=True)
+    
     object_df=load_object_index_df()
