@@ -18,14 +18,64 @@ import imageio
 
 from tf.keras.layers import Conv2D, MaxPooling2D, Dropout, Dense, Conv2DTranspose
 import tf.keras.image as image
+import tf.keras.backend as K
 
 import img_util
 import util
 
+    
+def DownBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Down'):
+    """Make a convolutional block with DownSampling.
+
+    Conv -> Batch Norm -> Leaky ReLU -> MaxPool -> Dropout
+
+    Args: inputs - Input Batch of Images [Nbatch, W, H,Nchannel]
+    Returns: d - Output Batch of Images [Nbatch, W/2, H/2, filters]
+    """
+    with K.name_scope(scope):
+        c = Conv2D(filters=filters,kernel_size=kernel_size,padding='same',
+                   data_format='channels_last',name=scope+'_Conv')(inputs)
+        b = BatchNormalization(name=scope+'_BatchNorm')(c)
+        r = LeakyReLU(alpha=alpha,name=scope+'_RELU')(b)
+        m = MaxPooling2D((2,2),name=scope+'_MaxPool')(r)
+        d = Dropout(dropout,name=scope+'_Dropout')(m)
+        return d
+
+def MidBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Mid'):
+    """Make a Convolutional block in the Middle
+
+    Conv -> Batch Norm -> Leaky ReLU -> Dropout
+
+    Args: inputs - Input Batch of Images [Nbatch, W, H, Nchannel]
+    Returns: d - Output Batch of Images [Nbatch, 2*W2, 2*H, filters]
+    """
+    with K.name_scope(scope):
+        c = Conv2D(filters=filters,kernel_size=kernel_size,padding='same',
+                   data_format='channels_last', name=scope+'_Conv')(inputs)
+        b = BatchNormalization(name=scope+'_BatchNorm')(c)
+        r = LeakyReLU(alpha=alpha,name=scope+'_RELU')(b)
+        d = Dropout(dropout,name=scope+'_Dropout')(r)
+        return d
+    
+def UpBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Up'):
+    """Make a Convolutional block with Upscaling.
+    (Can swap out Upscaling or Conv2DTranspose)
+    Conv -> Batch Norm -> Leaky ReLU -> Upscale -> Dropout
+
+    Args: inputs - Input Batch of Images [Nbatch, W, H, Nchannel]
+    Returns: d - Output Batch of Images [Nbatch, 2*W2, 2*H, filters]
+    """
+    with K.name_scope(scope):
+        c = Conv2D(filters=filters,kernel_size=kernel_size,padding='same',name=scope+'_Conv')(inputs)
+        b = BatchNormalization(name=scope+'_BatchNorm')(c)
+        r = LeakyReLU(alpha=alpha,name=scope+'_RELU')(b)
+        m = Upscaling2D((2,2),name=scope+'_Upscale')(r)
+        d = Dropout(dropout,name=scope+'_Dropout')(m)
+        return d
 
 
-class BaseNeuralNetwork(object):
-    """kerasNetworkBase
+class kerasUNet(object):
+    """kerasUNet
     Skeleton to hold network parameters, network archictecture, 
     and functions.
     Contains:
@@ -40,15 +90,101 @@ class BaseNeuralNetwork(object):
     """
     def __init__(self,param_path):
         self.param=util.load_param(param_path)
+        self.indx = indx.sort_values(['size_bucket','fold'],in_place=True)
+        self.param.Nbatch = 10
+        
         np.random.seed(param.seed)
         keras.backend.clear_session()
         self.build_network(self.param.network_arch)
 
     def load_network_param:
         raise NotImplementedError
-        
+
     def build_network(self):
-        raise NotImplementedError()
+
+        #Input_shape=(W,H)
+        #down1_shape = (W/2, H/2)
+        down1 = DownBlock(inputs, filters=8, kernel_size=3, dropout=0.25,scope='Down1')
+        #down2_shape = (W/4, H/4)
+        down2 = DownBlock(down1, filters=16, kernel_size=3, dropout=0.25,scope='Down2')        
+
+        #middle layers:  mid_shape = (W/4, H/4)
+        mid = MidBlock(down2, filters=32, kernel_size=3,dropout=0.25)
+        
+        #1st step up.  up2_shape = (W/2, H/2)
+        up2 = UpBlock(mid, filters=64, kernel_size=3,dropout=0.25)
+        # residual connection for results from upsampling with stuff from step before
+        up2b = merge([up2,down1],mode='sum')
+        
+        #2nd step up up1_shape = (W,H)
+        up1 = UpBlock(up2b, filters=64, kernel_size=3,dropout=0.25)        
+        up1b = merge([up1,inputs],mode='sum')
+
+        #could have more convolutions here. 
+        #final 1D convolution  (pixel-wise Dense layer)
+        final=Conv2D(kernel_size=1, filters=Nclasses, activation='softmax')(up1b)
+
+        self.model=model(inputs=inputs, outputs=final)
+        self.model.compile(loss='pixelwise_crossentropy',
+                           optimizer='adam',
+                           metrics=['IOU'])
+
+
+    def pixelwise_crossentropy(Ytrue,Ypred):
+        """
+        compute pixelwise cross-entropy across most popular classes example by example.
+
+        Input: Ytrue Tensor (Nbatch, W, H, 3)  
+               Ypred Tensor (Nbatch, W, H, Nclass)
+        """
+        #define a custom loss function using the pixel-wise cross entropy.
+        W,H,Nc = Ypred.shape
+        R = Ytrue[:,:,0]
+        G = Ytrue[:,:,1]
+
+        ytrue_class= (R//10)*255 + G
+        #get classes_presenre
+        classes_present = set(ytrue_class.reshape(-1))
+        cost=0
+        for i, class_label in enumerate(self.class_lookup):
+            #get numerical value associated with class cl
+            ypred_c = K.clip(ypred[:,:,i],self.param.eps,1-self.param.eps)
+            if class_label in classes_present:
+                #make logical mask
+                msk = K.equal(ytrue_class, class_label)
+                cost += K.mean(msk*K.log(ypred_c)
+                              +(~msk)*K.log(1-ypred_c))/(Nclasses)
+            else:
+                #find all erroneous classes 
+                cost += K.mean(K.log(1-ypred_c))/(Nclasses)
+        return cost
+        
+    def _get_X_y_batch(self,size_bucket=0,fold=0):
+
+        #pick a random bin:
+
+        rand_bin = np.random.randint(low=0,high=Nbin)
+        size = bin_size(rand_bin)
+
+        count=0
+
+        Wtarget=util.Wlist[size_bucket]
+        Htarget=util.Hlist[size_bucket]
+        
+        X=K.zeros([Nbatch, Wtarget, Htarget,3])
+        i=0
+        while (i< len(indx_df)):
+            row = self.indx.iloc[i]
+            j = i % self.param.Nbatch
+            X_name= '/'.join([row['dir'],row['fname']])
+            y_name= X_name[:-4]+'_seg.png'
+            X[j]=image.load_img(X_name, target_size=(Htarget,Wtarget))
+            y[j]=image.load_img(y_name, target_size=(Htarget,Wtarget))
+            if (j == (self.param.Nbatch-1)):
+               return X,y
+        #catch last iteration       
+        return X,y
+
         
     #Why generator? Easier to implement early stopping.
     def rand_batch_generator(self,X,y,vec):
@@ -69,8 +205,6 @@ class BaseNeuralNetwork(object):
                                       size=self.param.batch_size)
             yield self._get_X_y_batch(X,y,ind_sub,vec)
 
-    def _get_X_y_batch(self,X,y,ind,vec):
-        raise NotImplementedError()
         
     def det_batch_generator(self,X,y,vec):
         """det_batch_generator
@@ -145,103 +279,25 @@ class BaseNeuralNetwork(object):
         
         self.param=util.load_param(param_path+'.param')
         self.model=keras.models.load_model(path+'.model')
-    
-        
-def UNet(BaseNeuralNetwork):
 
-    def build_network(self):
 
-        # Input layer (variable size)
+"""
+How to organize this?  
 
-        # 2 sets down:
-        # Conv2D
-        # MaxPooling
-        # Dropout
-        #1st set down 
-        c1 = Conv2D(filters=32,kernel_size=3,padding='same',activation='relu')(inputs)
-        d1 = BatchNormalization()(c1)        
-        m1 = MaxPooling2D((2,2))(d1)
+We have around 20k images.  We have split it into 5 buckets, and 5 size buckets.
+So there are 25 divisions.
 
-        #2nd set down
-        c2 = Conv2D(filters=64,kernel_size=3,padding='same',activation='relu')(m1)
-        d2 = BatchNormalization()(c2)        
-        m2 = MaxPooling2D((2,2))(d2)
+We need a flag to select out a particular fold for train/validation. e.g. Fold!=0 and Fold==0
 
-        #middle layers
-        cmid = Conv2D(filters=128, kernel_size=3,padding='same', activation=relu)(m2)
-        dmid = BatchNormalization()(cmid)
-        
-        #1st step up
-        c3 = Conv2D(filters=64,kernel_size=3,padding='same',activation='relu')(dmid)
-        d3 = BatchNormalization()(c3)        
-        m3 = UpSampling2D(2,2))(d3)
-        # residual connection for results from upsampling with stuff from step before
-        z3 = merge([m3,d2],mode='sum')
-        
-        #2nd step up
-        c4 = Conv2D(filters=32,kernel_size=3,padding='same',activation='relu')(d3)
-        d3 = BatchNormalization()(c3)                
-        m4 = UpSampling2D(2,2))(c4)
-        z4 = merge([d4,d1],mode='sum')
+For sizing, this is necessary for remotely efficient training.  
+We can sort the index dataframe.  Build batches within allowed buckets.  
 
-        #final 1D convolution
-        final=Conv2D(kernel_size=1, activation='relu')(z4)
+Alternatively: 
 
-        self.model=model(inputs=inputs, outputs=final)
-        self.model.compile(optimizer='adam',metrics=['IOU'])
-        
+Training - loop over whole dataset, building batches for allowed size
 
-    def _get_X_y_batch(self,indx_df,size_bucket=0,fold=0):
+"""
 
-        #pick a random bin:
-
-        rand_bin = np.random.randint(low=0,high=Nbin)
-        size = bin_size(rand_bin)
-
-        count=0
-
-        Wtarget=util.Wlist[size_bucket]
-        Htarget=util.Hlist[size_bucket]
-        
-        X=np.zeros([Nbatch, Wtarget, Htarget,3])
-        i=0
-        while (i< len(indx_df):
-            row = indx_df.iloc[i]
-            j = i % self.param.Nbatch
-            X_name= '/'.join([row['dir'],row['fname']])
-            y_name= X_name[:-4]+'_seg.png'
-            X[j]=image.load_img(X_name, target_size=(Htarget,Wtarget))
-            y[j]=image.load_img(y_name, target_size=(Htarget,Wtarget))
-            if (j == (self.param.Nbatch-1)):
-               return X,y
-        #catch last iteration       
-        return X,y
-
-    def loss(Ytrue,Ypred):
-
-        #define a custom loss function using the pixel-wise cross entropy.
-        R = Ytrue[:,:,0]
-        G = Ytrue[:,:,1]
-
-        y_class= (R//10)*255 + G
-        #get classes_present
-        classes_present=set(y_class.reshape(-1))
-        for i in Nclasses:
-            num = class_dict[i]
-            if num in classes_present:
-               msk = (y_class==num)
-            else:
-               continue
-            loss+= msk*np.log10(ypred[:,:,i]+1E-16)
-        
-
-        #only considers top-50 classes.
-        #uses a dict to lookup classes.
-
-        # use R/G channels to look up masks in those classes
-        # compute cross-entropy on those.
-        # average across 
-               
         
 
                

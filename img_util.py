@@ -68,24 +68,12 @@ def augment_indx_df(indx_df):
         box1 = (width <= Wlist[i+1]) & (height <= Hlist[i+1])
         msk_arr[:,i] = np.logical_and(~box0, box1)
         
-        # width_cond0 =  (Wlist[i] < width )
-        # width_cond1 = (width  <= Wlist[i+1])
-        # #Height upper/lower bounds
-        # height_cond0 = (Hlist[i] < height)
-        # height_cond1 = (height <= Hlist[i+1])
-        # #find width_strip 
-        # width_cond = (width_cond0 & width_cond1 & height_cond1)
-        # #find height_strip 
-        # height_cond = (height_cond0 & height_cond1 & width_cond1)
-        # msk_arr[:,i] = (height_cond | width_cond)
-        # print('wtf bro?')
     msk_arr=msk_arr.astype(bool)
     indx_df['size_bucket']=np.zeros(Nexample)
     for i in range(Nbucket):
         indx_df.loc[msk_arr[:,i],'size_bucket']=i
     #add random label for subsetting.
-    print('why?')
-    indx_df['Fold']=np.random.randint(low=0,high=5,size=Nexample)
+    indx_df['fold']=np.random.randint(low=0,high=5,size=Nexample)
     return msk_arr
 
 def plot_sizes(indx_df,bucket=0):
@@ -107,6 +95,7 @@ def plot_counts(indx_df,bucket=None):
     plt.show()
     return class_counts
 
+
 def load_img_indx_df(index_str='index/train_indx.csv'):
     """Load Python DataFrame with images including path, size.
     Returns pandas DataFrame.
@@ -114,13 +103,20 @@ def load_img_indx_df(index_str='index/train_indx.csv'):
     df=pd.read_csv(index_str)
     return df
 
-def save_img_indx_df(df,index_str='index/train_indx.csv'):
-    df.to_csv(indx_df,index=False)
+def load_object_index_df(file_name='index/ADE20K_index_object.csv'):
+    return pd.read_csv(file_name)
 
+
+def save_img_indx_df(df,index_str='index/train_indx.csv'):
+    df.to_csv(index_str,index=False)
+    return None
 
 #get counts of objects in images.
 
 #look at most popular classes.
 
-
-    
+if __name__=="__main__":
+    indx_df=load_img_indx_df()
+    augment_indx_df(indx_df)
+    indx_df.sort_values(['fold','size_bucket'],inplace=True)
+    object_df=load_object_index_df()
