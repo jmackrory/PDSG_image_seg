@@ -128,24 +128,28 @@ def get_classes(img):
     return classes
 
 
-def get_training_lists(indx_df,size_buckets=[0,1],val_fold=0):
+def get_training_dicts(indx_df,size_buckets=[0,1],val_fold=0):
     """
-    given desired buckets (0,1,2,3,4) returns a set of lists
-    of filenames for each bucket
+    given desired buckets (0,1,2,3,4) returns a dict of lists
+    of filenames for each bucket using indx_df
+    Separates out val_fold to use for validation.
 
-    Return train_files: list of lists of files within each desired size_bucket
+    Input: indx_df - pandas dataframe with file info, and size_buckets and fold numbers
+
+    Return train_files: dict of lists with indices in indx_df to train on 
+           val_files: dict of lists with indices in indx_df for validation
  
     """
-    train_ind={}
-    val_ind={}
+    train_ind=dict()
+    val_ind=dict()
     val_msk = indx_df['fold']==val_fold
-    #irange=np.arange(len(indx_df))
-    irange = indx_df.index
+    irange=np.arange(len(indx_df))
+    #irange = indx_df.index
     for size in set(size_buckets):
         size_msk = (indx_df['size_bucket']==size)
-        train_ind[size](irange[size_msk & (~val_msk)])
-        val_ind[size](irange[size_msk & (val_msk)])
-    return train_ind,val_ind
+        train_ind[size] = irange[size_msk & (~val_msk)]
+        val_ind[size] = irange[size_msk & (val_msk)]
+    return train_ind, val_ind
     
 def get_common_class_indx(object_df,ispart_frac=0.5,Nclass=50):
     #try to consider big features first.  
@@ -160,7 +164,6 @@ def get_counts_match(object_df,string,n=10):
     msk=object_df['objectnames'].str.match('^{}$'.format(string))
     return object_df[msk].iloc[:n]
 
-
 #get counts of objects in images.
 
 #look at most popular classes.
@@ -171,5 +174,4 @@ if __name__=="__main__":
     indx_df.sort_values(['fold','size_bucket'],inplace=True)
     #why? why is this a special separate function? who thought this was a good idea?
     indx_df.reset_index(inplace=True)
-    
     object_df=load_object_index_df()
