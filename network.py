@@ -12,17 +12,15 @@ import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 
-import PIL
+# import PIL
+# import imageio
 
-import imageio
-
-from tf.keras.layers import Conv2D, MaxPooling2D, Dropout, Dense, Conv2DTranspose
-import tf.keras.image as image
-import tf.keras.backend as K
+from keras.layers import Conv2D, MaxPooling2D, Dropout, Dense, Conv2DTranspose
+import keras.preprocessing.image as image
+import keras.backend as K
 
 import img_util
 import util
-
     
 def DownBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Down'):
     """Make a convolutional block with DownSampling.
@@ -73,6 +71,12 @@ def UpBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Up')
         d = Dropout(dropout,name=scope+'_Dropout')(m)
         return d
 
+class NetworkParam(object):
+
+    def __init__():
+        
+
+        
 
 class kerasUNet(object):
     """kerasUNet
@@ -88,18 +92,24 @@ class kerasUNet(object):
     save_model
     load_model
     """
-    def __init__(self,param_path):
-        self.param=util.load_param(param_path)
-        self.indx = indx.sort_values(['size_bucket','fold'],in_place=True)
-        self.param.Nbatch = 10
+    def __init__(self,indx_df,object_df,param_file='basic.param'):
+        self.indx = indx_df
+        self.param=self.load_param(param_file)
+        self.training_dict, self.valid_dict = img_util.get_training_dicts(indx_df,self.param.size_buckets,self.param.val_fold)
+        self.class_lookup=img_util.get_common_class_indx(object_df)
+
         
-        np.random.seed(param.seed)
+        np.random.seed(self.param.seed)
         keras.backend.clear_session()
-        self.build_network(self.param.network_arch)
+        self.build_network()
 
-    def load_network_param(self):
-        raise NotImplementedError
+    def load_param(self,param_file):
 
+        param_dict=magic_function(param_file)
+        
+        
+        
+        
     def build_network(self):
 
         #Input_shape=(W,H)
@@ -129,6 +139,34 @@ class kerasUNet(object):
                            optimizer='adam',
                            metrics=['IOU'])
 
+    def IOU(self,Ytrue,Ypred):
+        """
+        compute pixelwise cross-entropy across most popular classes example by example.
+
+        Input: Ytrue Tensor (Nbatch, W, H, 3)  
+               Ypred Tensor (Nbatch, W, H, Nclass)
+        """
+        #define a custom loss function using the pixel-wise cross entropy.
+        W,H,Nc = Ypred.shape
+        R = Ytrue[:,:,0]
+        G = Ytrue[:,:,1]
+
+        ytrue_class= (R//10)*256 + G
+        #get classes_presenre
+        classes_present = set(ytrue_class.reshape(-1))
+        cost=0
+        for i, class_label in enumerate(self.class_lookup):
+            #get numerical value associated with class cl
+            pred_msk = ypred[:,:,i]>0.5
+            if class_label in classes_present:
+                #make logical mask
+                true_msk = K.equal(ytrue_class, class_label)
+
+                iou = np.sum(true_msk & pred_msk)/np.sum(true_msk | pred_msk)
+                cost += iou
+        return cost/Nclasses
+                             
+    
 
     def pixelwise_crossentropy(self,Ytrue,Ypred):
         """
