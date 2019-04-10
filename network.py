@@ -18,7 +18,8 @@ import matplotlib.pyplot as plt
 import keras
 from keras.layers import Input, Dropout, Dense, BatchNormalization
 from keras.layers import Conv2D, MaxPooling2D, UpSampling2D, Conv2DTranspose
-from keras.layers import LeakyReLU, Add 
+from keras.layers import LeakyReLU, Add
+from keras.models import Model
 import keras.preprocessing.image as image
 import keras.backend as K
 
@@ -74,7 +75,20 @@ def UpBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Up')
         d = Dropout(dropout,name=scope+'_Dropout')(m)
         return d
 
-        
+def SkipConnection(In1, In2,dim2,scope='Skip'):
+    """Make a skip connection from one side of U to the other.
+    Includes a 1x1 convolution to change dimension.
+    Inputs:
+    In1 - tensor from down leg
+    In2 - tensor from up leg
+    dim2 -number of channels on up leg.
+    Return:
+    skip - tensor from In1+In2
+    """
+    C1=Conv2D(kernel_size=1,filters=dim2,padding='same',name=scope+'_Conv')(In1)
+    skip = Add()([C1,In2])
+    return skip
+    
 class NetworkParam(object):
 
     """NetworkParam
@@ -137,12 +151,15 @@ class kerasUNet(object):
         self.indx = indx_df
         self.param=NetworkParam(param_file)
         self.training_dict, self.valid_dict = img_util.get_training_dicts(indx_df,self.param.size_buckets,self.param.val_fold)
-        self.class_lookup=img_util.get_common_class_indx(object_df)
+        self.class_lookup=img_util.get_common_class_indx(object_df,Nclasses=self.param.Nclasses)
         
         np.random.seed(self.param.seed)
         keras.backend.clear_session()
         self.build_network()
-
+        self.train_ind, self.val_ind = get_training_dicts(indx_df,
+                                                          self.param.size_buckets,
+                                                          self.param.val_fold)        
+        
     def load_param(self,param_file):
 
         param_dict=util.load_param(param_file)
@@ -160,25 +177,26 @@ class kerasUNet(object):
         down2 = DownBlock(down1, filters=16, kernel_size=3, dropout=self.param.dropout,scope='Down2')        
 
         #middle layers:  mid_shape = (W/4, H/4)
-        mid = MidBlock(down2, filters=32, kernel_size=3,dropout=self.param.dropout)
+        mid = MidBlock(down2, filters=32, kernel_size=3,dropout=self.param.dropout,scope='Mid')
         
         #1st step up.  up2_shape = (W/2, H/2)
-        up2 = UpBlock(mid, filters=64, kernel_size=3,dropout=self.param.dropout)
+        up2 = UpBlock(mid, filters=64, kernel_size=3,dropout=self.param.dropout,scope='Up2')
         # residual connection for results from upsampling with stuff from step before
-        up2b = Add()([up2,down1])
+        
+        up2b = SkipConnection(down1,up2,64,scope='Skip2')
         
         #2nd step up up1_shape = (W,H)
-        up1 = UpBlock(up2b, filters=64, kernel_size=3,dropout=self.param.dropout)        
-        up1b = Add()([up1,inputs])
+        up1 = UpBlock(up2b, filters=64, kernel_size=3,dropout=self.param.dropout,scope='Up1')        
+        up1b = SkipConnection(inputs,up1,64,scope='Skip1')
 
         #could have more 2D convolutions here. 
         #final 1D convolution  (pixel-wise Dense layer)
-        final=Conv2D(kernel_size=1, filters=Nclasses, activation='softmax')(up1b)
+        final=Conv2D(kernel_size=1, filters=self.param.Nclasses, activation='softmax',name='FinalConv')(up1b)
 
-        self.model=model(inputs=inputs, outputs=final)
-        self.model.compile(loss=self.param.loss,
-                           optimizer=self.param.optimizer,
-                           metrics=self.param.metrics)
+        self.model=Model(inputs=inputs, outputs=final)
+        self.model.compile(loss=self.pixelwise_crossentropy,
+                           optimizer="adam",
+                           metrics=[self.IOU])
 
     def IOU(self,Ytrue,Ypred):
         """
@@ -188,13 +206,14 @@ class kerasUNet(object):
                Ypred Tensor (Nbatch, W, H, Nclass)
         """
         #define a custom loss function using the pixel-wise cross entropy.
-        W,H,Nc = Ypred.shape
+        #Nb,W,H,Nc = Ypred.shape
         R = Ytrue[:,:,0]
         G = Ytrue[:,:,1]
 
         ytrue_class= (R//10)*256 + G
-        #get classes_presenre
-        classes_present = set(ytrue_class.reshape(-1))
+        #get classes_present
+        #classes_present = set(K.reshape(ytrue_class,-1))
+        classes_present = tf.unique(K.reshape(ytrue_class,-1))
         cost=0
         for i, class_label in enumerate(self.class_lookup):
             #get numerical value associated with class cl
@@ -206,7 +225,6 @@ class kerasUNet(object):
                 iou = np.sum(true_msk & pred_msk)/np.sum(true_msk | pred_msk)
                 cost += iou
         return cost/Nclasses
-                             
     
 
     def pixelwise_crossentropy(self,Ytrue,Ypred):
@@ -217,13 +235,14 @@ class kerasUNet(object):
                Ypred Tensor (Nbatch, W, H, Nclass)
         """
         #define a custom loss function using the pixel-wise cross entropy.
-        W,H,Nc = Ypred.shape
+        #W,H,Nc = Ypred.shape
         R = Ytrue[:,:,0]
         G = Ytrue[:,:,1]
 
         ytrue_class= (R//10)*256 + G
         #get classes_presenre
-        classes_present = set(ytrue_class.reshape(-1))
+        #classes_present = set(K.reshape(ytrue_class,-1))
+        classes_present = tf.unique(K.reshape(ytrue_class,-1))        
         cost=0
         for i, class_label in enumerate(self.class_lookup):
             #get numerical value associated with class cl
@@ -255,12 +274,11 @@ class kerasUNet(object):
             y[j]=image.load_img(y_name, target_size=(Htarget,Wtarget))
         return X,y
 
-
     def get_random_train_bucket(self):
         """generator to pick a random allowed_bucket using relative sizes
         """
         #list of tuples with key and number in each bucket.
-        N_in_bucket=[(key, len(val)) for key,val in self.train_ind.items()]
+        N_in_bucket=[(key, len(val)) for key,val in self.train_dict.items()]
         vals=[x[1] for x in N_in_bucket]
         #maps those sizes to [0,1) interval to randomly select one
         rand_boundary=np.cumsum(vals)/np.sum(vals)
@@ -269,9 +287,7 @@ class kerasUNet(object):
             for i,v in enumerate(vals):
                 if (r<v):
                     yield N_in_bucket[i][0] 
-
     
-    #Why generator? Easier to implement early stopping.
     def rand_train_batch_generator(self):
         """
         Generator to make random batches of data.
@@ -287,7 +303,7 @@ class kerasUNet(object):
         """
         while True:
             size_bucket=self.get_random_train_bucket()
-            ind_sub=np.random.choice(self.train_list[size_bucket],
+            ind_sub=np.random.choice(self.train_dict[size_bucket],
                                      size=self.param.batch_size)
             yield self._get_X_y_batch(ind_sub,size_bucket)
 
@@ -299,7 +315,7 @@ class kerasUNet(object):
         to deterministically loop over data once. 
         """
         Nb=self.param.batch_size
-        for bucket,ind_list in self.train_list.items():
+        for bucket,ind_list in self.train_dict.items():
             N_in_bucket=len(ind_list)
             i0=0
             i1=Nb

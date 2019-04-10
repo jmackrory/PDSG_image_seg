@@ -151,11 +151,11 @@ def get_training_dicts(indx_df,size_buckets=[0,1],val_fold=0):
         val_ind[size] = irange[size_msk & (val_msk)]
     return train_ind, val_ind
     
-def get_common_class_indx(object_df,ispart_frac=0.5,Nclass=50):
+def get_common_class_indx(object_df,ispart_frac=0.5,Nclasses=50):
     #try to consider big features first.  
     msk= object_df['proportionClassIsPart'] < ispart_frac
     ind=object_df[msk]['Index'].values
-    return ind[:Nclass]
+    return ind[:Nclasses]
 
 def get_counts_match(object_df,string,n=10):
     """gets rows where an exact match occurs in the name
