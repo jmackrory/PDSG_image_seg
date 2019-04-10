@@ -15,7 +15,10 @@ import matplotlib.pyplot as plt
 # import PIL
 # import imageio
 
-from keras.layers import Conv2D, MaxPooling2D, Dropout, Dense, Conv2DTranspose
+import keras
+from keras.layers import Input, Dropout, Dense, BatchNormalization
+from keras.layers import Conv2D, MaxPooling2D, UpSampling2D, Conv2DTranspose
+from keras.layers import LeakyReLU, Add 
 import keras.preprocessing.image as image
 import keras.backend as K
 
@@ -67,16 +70,54 @@ def UpBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Up')
         c = Conv2D(filters=filters,kernel_size=kernel_size,padding='same',name=scope+'_Conv')(inputs)
         b = BatchNormalization(name=scope+'_BatchNorm')(c)
         r = LeakyReLU(alpha=alpha,name=scope+'_RELU')(b)
-        m = Upscaling2D((2,2),name=scope+'_Upscale')(r)
+        m = UpSampling2D((2,2),name=scope+'_Upscale')(r)
         d = Dropout(dropout,name=scope+'_Dropout')(m)
         return d
 
+        
 class NetworkParam(object):
 
-    def __init__():
-        
+    """NetworkParam
+    Object to hold parameters for use in constructing 
+    Neural Networks.
+    """
+    def __init__(self,param_file,**kwargs):
+        #Gotta be a less stupid way of doing this.
+        #So set some sensible defaults.
+        self.learning_rate=0.001
+        self.activation='relu'
+        self.wordvec_dim=50
+        self.regtype='dropout'
+        self.dropout=0.25
+        self.metrics=['acc']
+        self.optimizer="adam"
+        self.loss='sparse_categorical_crossentropy'
+        self.seed=1029
+        self.batch_size=100
+        self.Nepoch=5
+        self.kernel_size=3
+        self.pool=2
 
-        
+        param_dict=util.load_param(param_file)
+        #Now overwrite any values with the 
+        for key,value in param_dict.items():
+            setattr(self,key,value)
+
+        #Now overwrite any values with the 
+        for key,value in kwargs.items():
+            setattr(self,key,value)
+
+    def save_param(self,paramdict,paramfile):
+        """saves parameter dict to JSON"""
+        with open(paramfile,'rb') as f:
+            json.save(paramdict,f)
+
+    def load_param(self, paramfile):
+        """loads parameters from JSON to a Python Dict"""
+        with open(paramfile,'rb') as f:
+            param_dict=json.load(f)
+        return param_dict
+            
 
 class kerasUNet(object):
     """kerasUNet
@@ -94,10 +135,9 @@ class kerasUNet(object):
     """
     def __init__(self,indx_df,object_df,param_file='basic.param'):
         self.indx = indx_df
-        self.param=self.load_param(param_file)
+        self.param=NetworkParam(param_file)
         self.training_dict, self.valid_dict = img_util.get_training_dicts(indx_df,self.param.size_buckets,self.param.val_fold)
         self.class_lookup=img_util.get_common_class_indx(object_df)
-
         
         np.random.seed(self.param.seed)
         keras.backend.clear_session()
@@ -105,39 +145,40 @@ class kerasUNet(object):
 
     def load_param(self,param_file):
 
-        param_dict=magic_function(param_file)
-        
-        
-        
+        param_dict=util.load_param(param_file)
+        #Now overwrite any values with the 
+        for key,value in kwargs.items():
+            setattr(self,key,value)
         
     def build_network(self):
 
         #Input_shape=(W,H)
         #down1_shape = (W/2, H/2)
-        down1 = DownBlock(inputs, filters=8, kernel_size=3, dropout=0.25,scope='Down1')
+        inputs=Input(shape=(None,None,3))
+        down1 = DownBlock(inputs, filters=8, kernel_size=3, dropout=self.param.dropout,scope='Down1')
         #down2_shape = (W/4, H/4)
-        down2 = DownBlock(down1, filters=16, kernel_size=3, dropout=0.25,scope='Down2')        
+        down2 = DownBlock(down1, filters=16, kernel_size=3, dropout=self.param.dropout,scope='Down2')        
 
         #middle layers:  mid_shape = (W/4, H/4)
-        mid = MidBlock(down2, filters=32, kernel_size=3,dropout=0.25)
+        mid = MidBlock(down2, filters=32, kernel_size=3,dropout=self.param.dropout)
         
         #1st step up.  up2_shape = (W/2, H/2)
-        up2 = UpBlock(mid, filters=64, kernel_size=3,dropout=0.25)
+        up2 = UpBlock(mid, filters=64, kernel_size=3,dropout=self.param.dropout)
         # residual connection for results from upsampling with stuff from step before
-        up2b = merge([up2,down1],mode='sum')
+        up2b = Add()([up2,down1])
         
         #2nd step up up1_shape = (W,H)
-        up1 = UpBlock(up2b, filters=64, kernel_size=3,dropout=0.25)        
-        up1b = merge([up1,inputs],mode='sum')
+        up1 = UpBlock(up2b, filters=64, kernel_size=3,dropout=self.param.dropout)        
+        up1b = Add()([up1,inputs])
 
-        #could have more convolutions here. 
+        #could have more 2D convolutions here. 
         #final 1D convolution  (pixel-wise Dense layer)
         final=Conv2D(kernel_size=1, filters=Nclasses, activation='softmax')(up1b)
 
         self.model=model(inputs=inputs, outputs=final)
-        self.model.compile(loss='pixelwise_crossentropy',
-                           optimizer='adam',
-                           metrics=['IOU'])
+        self.model.compile(loss=self.param.loss,
+                           optimizer=self.param.optimizer,
+                           metrics=self.param.metrics)
 
     def IOU(self,Ytrue,Ypred):
         """
@@ -315,11 +356,12 @@ class kerasUNet(object):
             self.det_batch_generator(),steps=Nsteps)
         return eval_scores
 
-    def save_model(self,path_base):
+    def save_model(self):
         """saves whole model in hdf5 format."""
-        
-        self.model.save(path+'.model')
-        util.save_param(self.param,path_base+'.param')                    
+
+        save_name='/'.join([self.param.model_dir,self.param.model_name])
+        self.model.save(save_name+'.model')
+        self.param.save_param(self.param,save_name+'.param')                    
 
     def load_model(self,path_base):
         """loads saved model from hdf5"""
