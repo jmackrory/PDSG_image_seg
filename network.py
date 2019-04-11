@@ -149,16 +149,17 @@ class kerasUNet(object):
     """
     def __init__(self,indx_df,object_df,param_file='basic.param'):
         self.indx = indx_df
-        self.param=NetworkParam(param_file)
-        self.training_dict, self.valid_dict = img_util.get_training_dicts(indx_df,self.param.size_buckets,self.param.val_fold)
+        self.param = NetworkParam(param_file)
+        self.train_dict, self.val_dict = img_util.get_training_dicts(indx_df,self.param.size_buckets,self.param.val_fold)
         self.class_lookup=img_util.get_common_class_indx(object_df,Nclasses=self.param.Nclasses)
+        self.param.train_steps = len(self.train_dict)//self.param.batch_size
+        self.param.val_steps = len(self.val_dict)//self.param.batch_size
         
         np.random.seed(self.param.seed)
         keras.backend.clear_session()
         self.build_network()
-        self.train_ind, self.val_ind = get_training_dicts(indx_df,
-                                                          self.param.size_buckets,
-                                                          self.param.val_fold)        
+
+        
         
     def load_param(self,param_file):
 
@@ -213,18 +214,18 @@ class kerasUNet(object):
         ytrue_class= (R//10)*256 + G
         #get classes_present
         #classes_present = set(K.reshape(ytrue_class,-1))
-        classes_present = tf.unique(K.reshape(ytrue_class,-1))
+        #classes_present = tf.unique(K.reshape(ytrue_class,-1))
         cost=0
         for i, class_label in enumerate(self.class_lookup):
             #get numerical value associated with class cl
-            pred_msk = ypred[:,:,i]>0.5
-            if class_label in classes_present:
-                #make logical mask
-                true_msk = K.equal(ytrue_class, class_label)
-
-                iou = np.sum(true_msk & pred_msk)/np.sum(true_msk | pred_msk)
-                cost += iou
-        return cost/Nclasses
+            pred_msk = tf.cast(Ypred[:,:,i]>0.5,tf.int8)
+            #if class_label in classes_present:
+            #make logical mask
+            true_msk = tf.cast(K.equal(ytrue_class, class_label),tf.int8)
+            iou = K.sum(true_msk * pred_msk)/(K.sum(true_msk + pred_msk)+1)
+            cost = cost+iou
+        cost = cost/self.param.Nclasses
+        return cost
     
 
     def pixelwise_crossentropy(self,Ytrue,Ypred):
@@ -235,50 +236,53 @@ class kerasUNet(object):
                Ypred Tensor (Nbatch, W, H, Nclass)
         """
         #define a custom loss function using the pixel-wise cross entropy.
-        #W,H,Nc = Ypred.shape
+        #W,H,Nc = tf.shape(Ypred)
         R = Ytrue[:,:,0]
         G = Ytrue[:,:,1]
 
         ytrue_class= (R//10)*256 + G
         #get classes_presenre
         #classes_present = set(K.reshape(ytrue_class,-1))
-        classes_present = tf.unique(K.reshape(ytrue_class,-1))        
+        #classes_present = tf.unique(K.reshape(ytrue_class,[-1,W*H]))        
         cost=0
         for i, class_label in enumerate(self.class_lookup):
             #get numerical value associated with class cl
-            ypred_c = K.clip(ypred[:,:,i],self.param.eps,1-self.param.eps)
-            if class_label in classes_present:
-                #make logical mask
-                msk = K.equal(ytrue_class, class_label)
-                cost += K.mean(msk*K.log(ypred_c)
-                              +(~msk)*K.log(1-ypred_c))/(Nclasses)
-            else:
-                #find all erroneous classes 
-                cost += K.mean(K.log(1-ypred_c))/(Nclasses)
+            Ypred_c = K.clip(Ypred[:,:,i],self.param.eps,1-self.param.eps)
+            #if class_label in classes_present:
+            #make logical mask
+            msk = K.equal(ytrue_class, class_label)
+            cost = cost+K.sum(K.log(tf.boolean_mask(Ypred_c, msk  ))) \
+                   +K.sum(K.log(tf.boolean_mask(1-Ypred_c, (~msk)  )))
+            #else:
+            #    #find all erroneous classes 
+            #    cost += K.mean(K.log(1-ypred_c))/(Nclasses)
+        shapes=tf.cast(tf.shape(Ypred),tf.float32)
+        cost = cost/(self.param.Nclasses*shapes[-2]*shapes[-3])
         return cost
         
     def _get_X_y_batch(self,ind,size_bucket=0):
         """given list of indices and a corresponding bucket,
         returns a batch for training.  
         """
-        Wtarget=util.Wlist[size_bucket]
-        Htarget=util.Hlist[size_bucket]
+        Wtarget=img_util.Wlist[size_bucket+1]
+        Htarget=img_util.Hlist[size_bucket+1]
 
         Nb=len(ind)
-        X=K.zeros([ind, Wtarget, Htarget,3])
+        X=np.zeros([Nb, Wtarget, Htarget,3])
+        y=np.zeros([Nb, Wtarget, Htarget,3])
         for j,i in enumerate(ind):
             row = self.indx.iloc[i]
             X_name= '/'.join([row['dir'],row['fname']])
             y_name= X_name[:-4]+'_seg.png'
-            X[j]=image.load_img(X_name, target_size=(Htarget,Wtarget))
-            y[j]=image.load_img(y_name, target_size=(Htarget,Wtarget))
+            X[j]=image.load_img(X_name, target_size=(Wtarget,Htarget))
+            y[j]=image.load_img(y_name, target_size=(Wtarget,Htarget))
         return X,y
 
-    def get_random_train_bucket(self):
+    def get_random_train_bucket(self,file_dict):
         """generator to pick a random allowed_bucket using relative sizes
         """
         #list of tuples with key and number in each bucket.
-        N_in_bucket=[(key, len(val)) for key,val in self.train_dict.items()]
+        N_in_bucket=[(key, len(val)) for key,val in file_dict.items()]
         vals=[x[1] for x in N_in_bucket]
         #maps those sizes to [0,1) interval to randomly select one
         rand_boundary=np.cumsum(vals)/np.sum(vals)
@@ -288,34 +292,28 @@ class kerasUNet(object):
                 if (r<v):
                     yield N_in_bucket[i][0] 
     
-    def rand_train_batch_generator(self):
+    def rand_batch_generator(self,file_dict):
         """
         Generator to make random batches of data.
         Intended for use in training to endlessly
         generate samples of data.
 
-        X - list of lists of indices
-        y - true categories
-        vec - np.array with vectors.
-        
-        Yields: Xv - subset of X expanded to desired form.
-        yv - corresponding subset of labels.
+        dict - dict of list of files to lookup
         """
         while True:
-            size_bucket=self.get_random_train_bucket()
-            ind_sub=np.random.choice(self.train_dict[size_bucket],
+            size_bucket=self.get_random_train_bucket(file_dict)
+            ind_sub=np.random.choice(self.file_dict[size_bucket],
                                      size=self.param.batch_size)
             yield self._get_X_y_batch(ind_sub,size_bucket)
 
-        
-    def det_batch_generator(self):
+    def det_batch_generator(self,file_dict):
         """det_batch_generator
         Load deterministic batch generator.
         Intended for use with inference/prediction
         to deterministically loop over data once. 
         """
         Nb=self.param.batch_size
-        for bucket,ind_list in self.train_dict.items():
+        for bucket,ind_list in file_dict.items():
             N_in_bucket=len(ind_list)
             i0=0
             i1=Nb
@@ -328,7 +326,7 @@ class kerasUNet(object):
             ind_sub=np.arange(i0,len(y))        
             yield self._get_X_y_batch(ind_sub,bucket)
             
-    def train_network(self,X,y,vec):
+    def train_network(self):
         """train_network(self,X,y,vec)
         Actually train the keras model.
         Uses random batches from rand_batch_generator.
@@ -338,9 +336,8 @@ class kerasUNet(object):
         Output: None
         Side-effect: Trains self.model.
         """
-        
         self.model.fit_generator(
-            self.rand_batch_generator(),
+            self.rand_batch_generator(self.train_dict),
             epochs=self.param.Nepoch,
             steps_per_epoch=self.param.steps)
 
@@ -354,7 +351,7 @@ class kerasUNet(object):
         """
         Nsteps=np.ceil(len(y)/self.param.batch_size)
         pred=self.model.predict_generator(
-            self.det_batch_generator(),steps=Nsteps)
+            self.det_batch_generator(self.val_dict),steps=Nsteps)
         return pred
     
     def evaluate(self,X,y,vec):
