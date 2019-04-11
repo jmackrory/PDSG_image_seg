@@ -7,13 +7,9 @@
 
 # Will try to define a bunch of tests and lint the code for discipline.
 
-
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
-
-# import PIL
-# import imageio
 
 import keras
 from keras.layers import Input, Dropout, Dense, BatchNormalization
@@ -26,69 +22,10 @@ import keras.backend as K
 import img_util
 import util
     
-def DownBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Down'):
-    """Make a convolutional block with DownSampling.
+from blocks import DownBlock, MidBlock, UpBlock, SkipConnection
 
-    Conv -> Batch Norm -> Leaky ReLU -> MaxPool -> Dropout
+keras.backend.set_image_data_format('channels_last')
 
-    Args: inputs - Input Batch of Images [Nbatch, W, H,Nchannel]
-    Returns: d - Output Batch of Images [Nbatch, W/2, H/2, filters]
-    """
-    with K.name_scope(scope):
-        c = Conv2D(filters=filters,kernel_size=kernel_size,padding='same',
-                   data_format='channels_last',name=scope+'_Conv')(inputs)
-        b = BatchNormalization(name=scope+'_BatchNorm')(c)
-        r = LeakyReLU(alpha=alpha,name=scope+'_RELU')(b)
-        m = MaxPooling2D((2,2),name=scope+'_MaxPool')(r)
-        d = Dropout(dropout,name=scope+'_Dropout')(m)
-        return d
-
-def MidBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Mid'):
-    """Make a Convolutional block in the Middle
-
-    Conv -> Batch Norm -> Leaky ReLU -> Dropout
-
-    Args: inputs - Input Batch of Images [Nbatch, W, H, Nchannel]
-    Returns: d - Output Batch of Images [Nbatch, 2*W2, 2*H, filters]
-    """
-    with K.name_scope(scope):
-        c = Conv2D(filters=filters,kernel_size=kernel_size,padding='same',
-                   data_format='channels_last', name=scope+'_Conv')(inputs)
-        b = BatchNormalization(name=scope+'_BatchNorm')(c)
-        r = LeakyReLU(alpha=alpha,name=scope+'_RELU')(b)
-        d = Dropout(dropout,name=scope+'_Dropout')(r)
-        return d
-    
-def UpBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Up'):
-    """Make a Convolutional block with Upscaling.
-    (Can swap out Upscaling or Conv2DTranspose)
-    Conv -> Batch Norm -> Leaky ReLU -> Upscale -> Dropout
-
-    Args: inputs - Input Batch of Images [Nbatch, W, H, Nchannel]
-    Returns: d - Output Batch of Images [Nbatch, 2*W2, 2*H, filters]
-    """
-    with K.name_scope(scope):
-        c = Conv2D(filters=filters,kernel_size=kernel_size,padding='same',name=scope+'_Conv')(inputs)
-        b = BatchNormalization(name=scope+'_BatchNorm')(c)
-        r = LeakyReLU(alpha=alpha,name=scope+'_RELU')(b)
-        m = UpSampling2D((2,2),name=scope+'_Upscale')(r)
-        d = Dropout(dropout,name=scope+'_Dropout')(m)
-        return d
-
-def SkipConnection(In1, In2,dim2,scope='Skip'):
-    """Make a skip connection from one side of U to the other.
-    Includes a 1x1 convolution to change dimension.
-    Inputs:
-    In1 - tensor from down leg
-    In2 - tensor from up leg
-    dim2 -number of channels on up leg.
-    Return:
-    skip - tensor from In1+In2
-    """
-    C1=Conv2D(kernel_size=1,filters=dim2,padding='same',name=scope+'_Conv')(In1)
-    skip = Add()([C1,In2])
-    return skip
-    
 class NetworkParam(object):
 
     """NetworkParam
@@ -152,14 +89,20 @@ class kerasUNet(object):
         self.param = NetworkParam(param_file)
         self.train_dict, self.val_dict = img_util.get_training_dicts(indx_df,self.param.size_buckets,self.param.val_fold)
         self.class_lookup=img_util.get_common_class_indx(object_df,Nclasses=self.param.Nclasses)
-        self.param.train_steps = len(self.train_dict)//self.param.batch_size
-        self.param.val_steps = len(self.val_dict)//self.param.batch_size
+
+        Ntrain = 0
+        for key, file_list in self.train_dict.items():
+            Ntrain+=len(file_list)
+        Nval = 0
+        for key, file_list in self.val_dict.items():
+            Nval+=len(file_list)
+            
+        self.param.train_steps = np.ceil(Ntrain/self.param.batch_size)
+        self.param.val_steps = np.ceil(Nval/self.param.batch_size)
         
         np.random.seed(self.param.seed)
         keras.backend.clear_session()
         self.build_network()
-
-        
         
     def load_param(self,param_file):
 
@@ -173,22 +116,22 @@ class kerasUNet(object):
         #Input_shape=(W,H)
         #down1_shape = (W/2, H/2)
         inputs=Input(shape=(None,None,3))
-        down1 = DownBlock(inputs, filters=8, kernel_size=3, dropout=self.param.dropout,scope='Down1')
+        down1 = DownBlock(inputs, filters=2, kernel_size=3, dropout=self.param.dropout,scope='Down1')
         #down2_shape = (W/4, H/4)
-        down2 = DownBlock(down1, filters=16, kernel_size=3, dropout=self.param.dropout,scope='Down2')        
+        down2 = DownBlock(down1, filters=4, kernel_size=3, dropout=self.param.dropout,scope='Down2')        
 
         #middle layers:  mid_shape = (W/4, H/4)
-        mid = MidBlock(down2, filters=32, kernel_size=3,dropout=self.param.dropout,scope='Mid')
+        mid = MidBlock(down2, filters=8, kernel_size=3,dropout=self.param.dropout,scope='Mid')
         
         #1st step up.  up2_shape = (W/2, H/2)
-        up2 = UpBlock(mid, filters=64, kernel_size=3,dropout=self.param.dropout,scope='Up2')
+        up2 = UpBlock(mid, filters=16, kernel_size=3,dropout=self.param.dropout,scope='Up2')
         # residual connection for results from upsampling with stuff from step before
         
-        up2b = SkipConnection(down1,up2,64,scope='Skip2')
+        up2b = SkipConnection(down1,up2,16,scope='Skip2')
         
         #2nd step up up1_shape = (W,H)
-        up1 = UpBlock(up2b, filters=64, kernel_size=3,dropout=self.param.dropout,scope='Up1')        
-        up1b = SkipConnection(inputs,up1,64,scope='Skip1')
+        up1 = UpBlock(up2b, filters=16, kernel_size=3,dropout=self.param.dropout,scope='Up1')        
+        up1b = SkipConnection(inputs,up1,16,scope='Skip1')
 
         #could have more 2D convolutions here. 
         #final 1D convolution  (pixel-wise Dense layer)
@@ -208,21 +151,23 @@ class kerasUNet(object):
         """
         #define a custom loss function using the pixel-wise cross entropy.
         #Nb,W,H,Nc = Ypred.shape
-        R = Ytrue[:,:,0]
-        G = Ytrue[:,:,1]
+        R = Ytrue[:,:,:,0]
+        G = Ytrue[:,:,:,1]
 
-        ytrue_class= (R//10)*256 + G
+        Ytrue_class= (R//10)*256 + G
         #get classes_present
         #classes_present = set(K.reshape(ytrue_class,-1))
         #classes_present = tf.unique(K.reshape(ytrue_class,-1))
         cost=0
         for i, class_label in enumerate(self.class_lookup):
             #get numerical value associated with class cl
-            pred_msk = tf.cast(Ypred[:,:,i]>0.5,tf.int8)
+            pred_msk = Ypred[:,:,:,i]>0.5
             #if class_label in classes_present:
             #make logical mask
-            true_msk = tf.cast(K.equal(ytrue_class, class_label),tf.int8)
-            iou = K.sum(true_msk * pred_msk)/(K.sum(true_msk + pred_msk)+1)
+            label_msk = K.equal(Ytrue_class, class_label)
+            label_AND_pred = tf.cast(tf.math.logical_and(label_msk, pred_msk),tf.float32)
+            label_OR_pred = tf.cast(tf.math.logical_or(label_msk, pred_msk),tf.float32)            
+            iou = K.sum(label_AND_pred)/(K.sum(label_OR_pred)+0.01)
             cost = cost+iou
         cost = cost/self.param.Nclasses
         return cost
@@ -286,15 +231,13 @@ class kerasUNet(object):
         vals=[x[1] for x in N_in_bucket]
         #maps those sizes to [0,1) interval to randomly select one
         rand_boundary=np.cumsum(vals)/np.sum(vals)
-        while True:
-            r=np.random.random()
-            for i,v in enumerate(vals):
-                if (r<v):
-                    yield N_in_bucket[i][0] 
+        r=np.random.random()
+        for i,v in enumerate(vals):
+            if (r<v):
+                return N_in_bucket[i][0] 
     
     def rand_batch_generator(self,file_dict):
-        """
-        Generator to make random batches of data.
+        """  Generator to make random batches of data.
         Intended for use in training to endlessly
         generate samples of data.
 
@@ -302,7 +245,7 @@ class kerasUNet(object):
         """
         while True:
             size_bucket=self.get_random_train_bucket(file_dict)
-            ind_sub=np.random.choice(self.file_dict[size_bucket],
+            ind_sub=np.random.choice(file_dict[size_bucket],
                                      size=self.param.batch_size)
             yield self._get_X_y_batch(ind_sub,size_bucket)
 
@@ -327,41 +270,54 @@ class kerasUNet(object):
             yield self._get_X_y_batch(ind_sub,bucket)
             
     def train_network(self):
-        """train_network(self,X,y,vec)
+        """train_network()
         Actually train the keras model.
-        Uses random batches from rand_batch_generator.
-        Input: X - np.array with rows of indices
-               y  - np.array with value of true class.
-               vec - np.array with wordvectors
+        Uses random batches from rand_batch_generator and train_dict
+        Input: None
         Output: None
         Side-effect: Trains self.model.
         """
         self.model.fit_generator(
             self.rand_batch_generator(self.train_dict),
             epochs=self.param.Nepoch,
-            steps_per_epoch=self.param.steps)
+            steps_per_epoch=self.param.train_steps)
 
-    def predict(self,X,y,vec):
+    def predict_all(self,file_dict):
         """predict(X,y,vec)
-        Loop over data and predict for all samples.
+        Loop over whole file_dict and predict for all samples (HUGE TASK! DONT DO IT)
         Input: X - np.array with rows of indices
                y  - np.array with value of true class.
                vec - np.array with wordvectors
         Output pred - tuple with losses/metrics over dataset
         """
-        Nsteps=np.ceil(len(y)/self.param.batch_size)
+        Ntot=0
+        for key,val in file_dict.items():
+            Ntot+=len(val)
+
+        Nsteps=np.ceil(Ntot/self.param.batch_size)
+
         pred=self.model.predict_generator(
-            self.det_batch_generator(self.val_dict),steps=Nsteps)
+            self.det_batch_generator(file_dict),steps=Nsteps)
+        return pred
+
+    def predict_afew(self,file_dict,ind_sub=np.arange(3),size_bucket=0):
+        """
+        Loop over a few instances and data and predict for all samples.
+        Input: file_dict - dict with list of entries to sample from indx_df
+               ind_sub  - np.array with locations to use
+               size_bucket - bucket from file_dict to try using
+        Output pred - Output images for that batch
+        """
+        batch,_=self._get_X_y_batch(ind_sub,size_bucket)
+        pred=self.model.predict(batch)
         return pred
     
-    def evaluate(self,X,y,vec):
-        """evaluate(self,X,y,vec)
-        Evaluates metrics by iterating over all datapoints in X,y
+    def evaluate(self,file_dict):
+        """
+        Evaluates metrics by iterating over all files in file_dict
         using loss and metrics specified in model.
 
-        Input: X - np.array with rows of indices
-               y  - np.array with value of true class.
-               vec - np.array with wordvectors
+        Input: file_dict - np.array with rows of indices
         Output eval_scores - tuple with losses/metrics over dataset
         """
         Nsteps=np.ceil(len(y)/self.param.batch_size)
@@ -381,24 +337,5 @@ class kerasUNet(object):
         
         self.param=util.load_param(param_path+'.param')
         self.model=keras.models.load_model(path+'.model')
-
-
-"""
-How to organize this?  
-
-We have around 20k images.  We have split it into 5 buckets, and 5 size buckets.
-So there are 25 divisions.
-
-We need a flag to select out a particular fold for train/validation. e.g. Fold!=0 and Fold==0
-
-For sizing, this is necessary for remotely efficient training.  
-We can sort the index dataframe.  Build batches within allowed buckets.  
-
-Alternatively: 
-
-Training - loop over whole dataset, building batches for allowed size
-
-"""
-
     
     
