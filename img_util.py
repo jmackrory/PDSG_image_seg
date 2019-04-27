@@ -112,7 +112,6 @@ def save_img_indx_df(df,index_str='index/train_indx.csv'):
     df.to_csv(index_str,index=False)
     return None
 
-
 def get_image(indx_df,num=0):
     img_dir=indx_df.loc[num,'dir']
     img_name=indx_df.loc[num,'fname']
@@ -126,7 +125,6 @@ def get_classes(img):
     """compute mapping from R/G to class number used in object_df"""
     classes=256.0*(img[:,:,0])//10  + img[:,:,1]
     return classes
-
 
 def get_training_dicts(indx_df,size_buckets=[0,1],val_fold=0):
     """
