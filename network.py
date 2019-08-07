@@ -11,20 +11,20 @@ import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 
-import keras
-from keras.layers import Input, Dropout, Dense, BatchNormalization
-from keras.layers import Conv2D, MaxPooling2D, UpSampling2D, Conv2DTranspose
-from keras.layers import LeakyReLU, Add
-from keras.models import Model
-import keras.preprocessing.image as image
-import keras.backend as K
+import tf.keras as keras
+from tensorflow.keras.layers import Input, Dropout, Dense, BatchNormalization
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, UpSampling2D, Conv2DTranspose
+from tensorflow.keras.layers import LeakyReLU, Add
+from tensorflow.keras.models import Model
+import tensorflow.keras.preprocessing.image as image
+import tensorflow.keras.backend as K
 
 import img_util
 import util
     
 from blocks import DownBlock, MidBlock, UpBlock, SkipConnection
 
-keras.backend.set_image_data_format('channels_last')
+tensorflow.keras.backend.set_image_data_format('channels_last')
 
 class NetworkParam(object):
 
@@ -84,11 +84,11 @@ class kerasUNet(object):
     save_model
     load_model
     """
-    def __init__(self,indx_df,object_df,param_file='basic.param'):
-        self.indx = indx_df
+    def __init__(self,index_df,object_df,param_file='basic.param'):
+        self.index = index_df
         self.param = NetworkParam(param_file)
-        self.train_dict, self.val_dict = img_util.get_training_dicts(indx_df,self.param.size_buckets,self.param.val_fold)
-        self.class_lookup=img_util.get_common_class_indx(object_df,Nclasses=self.param.Nclasses)
+        self.train_dict, self.val_dict = img_util.get_training_dicts(index_df,self.param.size_buckets,self.param.val_fold)
+        self.class_lookup=img_util.get_common_class_index(object_df,Nclasses=self.param.Nclasses)
 
         Ntrain = 0
         for key, file_list in self.train_dict.items():
@@ -116,25 +116,26 @@ class kerasUNet(object):
         #Input_shape=(W,H)
         #down1_shape = (W/2, H/2)
         inputs=Input(shape=(None,None,3))
-        down1 = DownBlock(inputs, filters=2, kernel_size=3, dropout=self.param.dropout,scope='Down1')
+        down1 = DownBlock(inputs, filters=4, kernel_size=3, dropout=self.param.dropout,scope='Down1')
         #down2_shape = (W/4, H/4)
-        down2 = DownBlock(down1, filters=4, kernel_size=3, dropout=self.param.dropout,scope='Down2')        
+        down2 = DownBlock(down1, filters=8, kernel_size=3, dropout=self.param.dropout,scope='Down2')        
 
         #middle layers:  mid_shape = (W/4, H/4)
-        mid = MidBlock(down2, filters=8, kernel_size=3,dropout=self.param.dropout,scope='Mid')
+        mid = MidBlock(down2, filters=16, kernel_size=3,dropout=self.param.dropout,scope='Mid')
         
         #1st step up.  up2_shape = (W/2, H/2)
-        up2 = UpBlock(mid, filters=16, kernel_size=3,dropout=self.param.dropout,scope='Up2')
+        up2 = UpBlock(mid, filters=32, kernel_size=3,dropout=self.param.dropout,scope='Up2')
         # residual connection for results from upsampling with stuff from step before
         
-        up2b = SkipConnection(down1,up2,16,scope='Skip2')
+        up2b = SkipConnection(down1,up2,32,scope='Skip2')
         
         #2nd step up up1_shape = (W,H)
-        up1 = UpBlock(up2b, filters=16, kernel_size=3,dropout=self.param.dropout,scope='Up1')        
-        up1b = SkipConnection(inputs,up1,16,scope='Skip1')
+        up1 = UpBlock(up2b, filters=32, kernel_size=3,dropout=self.param.dropout,scope='Up1')        
+        up1b = SkipConnection(inputs,up1,32,scope='Skip1')
 
         #could have more 2D convolutions here. 
         #final 1D convolution  (pixel-wise Dense layer)
+        #softmax to make a probability distribution across classes.
         final=Conv2D(kernel_size=1, filters=self.param.Nclasses, activation='softmax',name='FinalConv')(up1b)
 
         self.model=Model(inputs=inputs, outputs=final)
@@ -182,27 +183,29 @@ class kerasUNet(object):
         """
         #define a custom loss function using the pixel-wise cross entropy.
         #W,H,Nc = tf.shape(Ypred)
-        R = Ytrue[:,:,0]
-        G = Ytrue[:,:,1]
+        R = Ytrue[:,:,:,0]
+        G = Ytrue[:,:,:,1]
 
         ytrue_class= (R//10)*256 + G
-        #get classes_presenre
+        #get classes_present
+        shapes=tf.cast(tf.shape(ytrue_class),tf.float32)        
         #classes_present = set(K.reshape(ytrue_class,-1))
-        #classes_present = tf.unique(K.reshape(ytrue_class,[-1,W*H]))        
+        classes_present = tf.unique(K.reshape(ytrue_class,[K.prod(shapes)]))
         cost=0
         for i, class_label in enumerate(self.class_lookup):
             #get numerical value associated with class cl
-            Ypred_c = K.clip(Ypred[:,:,i],self.param.eps,1-self.param.eps)
+            Ypred_c = K.clip(Ypred[:,:,:,i],self.param.eps,1-self.param.eps)
             #if class_label in classes_present:
             #make logical mask
             msk = K.equal(ytrue_class, class_label)
-            cost = cost+K.sum(K.log(tf.boolean_mask(Ypred_c, msk  ))) \
-                   +K.sum(K.log(tf.boolean_mask(1-Ypred_c, (~msk)  )))
+            cost = cost - K.sum(tf.boolean_mask(K.log(1-Ypred_c), tf.math.logical_not(msk)  ))
+            cost = cost - K.sum(tf.boolean_mask(K.log(Ypred_c), msk  ))
+            
             #else:
             #    #find all erroneous classes 
             #    cost += K.mean(K.log(1-ypred_c))/(Nclasses)
         shapes=tf.cast(tf.shape(Ypred),tf.float32)
-        cost = cost/(self.param.Nclasses*shapes[-2]*shapes[-3])
+        cost = cost/(self.param.Nclasses*shapes[1]*shapes[2])
         return cost
         
     def _get_X_y_batch(self,ind,size_bucket=0):
@@ -216,7 +219,7 @@ class kerasUNet(object):
         X=np.zeros([Nb, Wtarget, Htarget,3])
         y=np.zeros([Nb, Wtarget, Htarget,3])
         for j,i in enumerate(ind):
-            row = self.indx.iloc[i]
+            row = self.index.iloc[i]
             X_name= '/'.join([row['dir'],row['fname']])
             y_name= X_name[:-4]+'_seg.png'
             X[j]=image.load_img(X_name, target_size=(Wtarget,Htarget))
@@ -232,7 +235,7 @@ class kerasUNet(object):
         #maps those sizes to [0,1) interval to randomly select one
         rand_boundary=np.cumsum(vals)/np.sum(vals)
         r=np.random.random()
-        for i,v in enumerate(vals):
+        for i,v in enumerate(rand_boundary):
             if (r<v):
                 return N_in_bucket[i][0] 
     
@@ -303,14 +306,14 @@ class kerasUNet(object):
     def predict_afew(self,file_dict,ind_sub=np.arange(3),size_bucket=0):
         """
         Loop over a few instances and data and predict for all samples.
-        Input: file_dict - dict with list of entries to sample from indx_df
+        Input: file_dict - dict with list of entries to sample from index_df
                ind_sub  - np.array with locations to use
                size_bucket - bucket from file_dict to try using
         Output pred - Output images for that batch
         """
-        batch,_=self._get_X_y_batch(ind_sub,size_bucket)
+        batch,y=self._get_X_y_batch(ind_sub,size_bucket)
         pred=self.model.predict(batch)
-        return pred
+        return pred, batch, y
     
     def evaluate(self,file_dict):
         """
@@ -337,5 +340,18 @@ class kerasUNet(object):
         
         self.param=util.load_param(param_path+'.param')
         self.model=keras.models.load_model(path+'.model')
-    
-    
+
+    def get_most_likely(self,pred):
+        """convert a (width, height, Nclass) array to (width,height,3) array R/G colors.
+        """
+
+        most_likely = np.argmax(pred,axis=2)
+
+        class_num = 
+        
+        
+
+        
+# Need functions to get most likely value
+
+

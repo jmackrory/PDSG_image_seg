@@ -94,10 +94,10 @@ for i = 1:Nobj;
 endfor
 fclose(obj_id)
 
-stop_here = true
-if (stop_here)
-  break
-endif
+## stop_here = true
+## if (stop_here)
+##   break
+## endif
 
 
 img_index_filename="index/ADE20K_img_index_mk2.tsv";
