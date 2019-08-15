@@ -1,9 +1,7 @@
-import keras.backend as K 
-from keras.layers import Input, Dropout, Dense, BatchNormalization
-from keras.layers import Conv2D, MaxPooling2D, UpSampling2D, Conv2DTranspose
-from keras.layers import LeakyReLU, Add
-
-
+import tensorflow.keras.backend as K 
+from tensorflow.keras.layers import Input, Dropout, Dense, BatchNormalization
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, UpSampling2D, Conv2DTranspose
+from tensorflow.keras.layers import LeakyReLU, Add
 
 
 def DownBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Down'):
@@ -23,6 +21,7 @@ def DownBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Do
         d = Dropout(dropout,name=scope+'_Dropout')(m)
         return d
 
+    
 def MidBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Mid'):
     """Make a Convolutional block in the Middle
 
@@ -38,6 +37,7 @@ def MidBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Mid
         r = LeakyReLU(alpha=alpha,name=scope+'_RELU')(b)
         d = Dropout(dropout,name=scope+'_Dropout')(r)
         return d
+
     
 def UpBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Up'):
     """Make a Convolutional block with Upscaling.
@@ -54,6 +54,7 @@ def UpBlock(inputs, filters=32, kernel_size=3, alpha=0.1,dropout=0.2,scope='Up')
         m = UpSampling2D(name=scope+'_Upscale')(r)
         d = Dropout(dropout,name=scope+'_Dropout')(m)
         return d
+
 
 def SkipConnection(In1, In2,dim2,scope='Skip'):
     """Make a skip connection from one side of U to the other.

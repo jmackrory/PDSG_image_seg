@@ -46,12 +46,12 @@ Nbucket=len(Hlist)-1
 #load new img index file.
 #need to adjust augment file to new format.
 def load_img_index_df(index_str='index/ADE20K_img_index_mk2.tsv'):
-    index_df=pd.read_csv(path,sep='\t')
+    index_df=pd.read_csv(index_str,sep='\t')
     return index_df
 
 def load_object_index_df(file_name='index/ADE20K_obj_index_mk2.tsv'):
     object_df=pd.read_csv(file_name,sep='\t')
-    object_df.sort_values('objectcount',inplace=True)
+    object_df.sort_values('objectCount',inplace=True)
     return object_df
 
 def test_load(path='index/ADE20K_obj_index_mk2.tsv'):
@@ -72,10 +72,10 @@ def augment_index_df(index_df):
     Nexample = len(index_df)
     msk_arr = np.zeros((Nexample,Nbucket))
 
-    # width = index_df['size'].apply(lambda x: eval(x)[0])
-    # height = index_df['size'].apply(lambda x: eval(x)[1])
-    # index_df['width'] = width
-    # index_df['height'] = height
+    #width = index_df['size'].apply(lambda x: eval(x)[0])
+    #height = index_df['size'].apply(lambda x: eval(x)[1])
+    width = index_df['width'] #= width
+    height = index_df['height'] #= height
 
     if (np.max(width)> Wlist[-1]) | (np.max(height)> Hlist[-1]):
         raise Exception('Image size larger than largest maximum bucket!')
@@ -120,8 +120,8 @@ def save_img_index_df(df,index_str='index/train_index.csv'):
     return None
 
 def get_image(index_df,num=0):
-    img_dir=index_df.loc[num,'dir']
-    img_name=index_df.loc[num,'fname']
+    img_dir=index_df.loc[num,'folder']
+    img_name=index_df.loc[num,'filename']
     jpeg_name='/'.join([img_dir,img_name])
     png_name= jpeg_name[:-4]+'_seg.png'
     img_jpg=imageio.imread(jpeg_name)
@@ -135,7 +135,7 @@ def get_classes(img):
     classes=256.0*(img[:,:,0])//10  + img[:,:,1]
     return classes
 
-def get_col_from_pred(img,lookup_dict):
+def get_color_from_pred(img,lookup_dict):
     """
     untested function to convert array of outputs
     to most likely classes. 
@@ -144,16 +144,16 @@ def get_col_from_pred(img,lookup_dict):
     using this to convert back.
     """
     # need layer indexes
-    indx_arg = np.argmax(img,axis=2)
+    indx_arg = np.argmax(img,axis=-1)
     vals = np.unique(indx_arg)
 
-    width,height,_ = img.shape
-    out_img = np.zeros((width,height,3))
+    Nbatch, width, height, Nclass = img.shape
+    out_img = np.zeros((Nbatch, width, height, 3))
 
     for val in vals:
-        msk = indx_arg==val
+        msk = indx_arg == val
         #find actual class corresponding to local index
-        cls = lookup_dict(val)
+        cls = lookup_dict[val]
 
         G = cls % 256
         R = (cls//256) * 10
@@ -190,7 +190,7 @@ def get_training_dicts(index_df,size_buckets=[0,1],val_fold=0):
 def get_common_class_index(object_df,ispart_frac=0.5,Nclasses=50):
     #try to consider big features first.  
     msk= object_df['proportionClassIsPart'] < ispart_frac
-    ind=object_df[msk]['Index'].values
+    ind=object_df[msk]['index'].values
     return ind[:Nclasses]
 
 def get_counts_match(object_df,string,n=10):
@@ -200,16 +200,16 @@ def get_counts_match(object_df,string,n=10):
     msk=object_df['objectnames'].str.match('^{}$'.format(string))
     return object_df[msk].iloc[:n]
 
-#get counts of objects in images.
-
-#update to use new img index and object index.
-
-#look at most popular classes.
-
-if __name__=="__main__":
+def load_and_clean_indices():
     index_df=load_img_index_df()
     augment_index_df(index_df)
     index_df.sort_values(['fold','size_bucket'],inplace=True)
     #why? why is this a special separate function? who thought this was a good idea?
     index_df.reset_index(inplace=True)
     object_df=load_object_index_df()
+    return index_df, object_df
+
+    
+    
+if __name__=="__main__":
+    index_df, object_df = load_and_clean_indices()
