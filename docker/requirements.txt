@@ -1,0 +1,11 @@
+tensorflow >= 2.11.0
+numpy
+pandas
+matplotlib
+scikit-learn
+ipdb
+ipykernel >= 6.0.0
+tqdm==4.64.1
+line_profiler
+jsonlines
+setuptools<60

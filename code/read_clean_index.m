@@ -5,8 +5,8 @@
 ##Also finds width/height arrays.
 
 
-index_path='data/ADE20K_2016_07_26/index_ade20k.mat';
-data_dir='data/';
+index_path='/tf/data/ADE20K_2016_07_26/index_ade20k.mat';
+data_dir='/tf/data/';
 if (exist('ade_index'))
   disp('Using in-memory index');
 else
@@ -44,7 +44,7 @@ else
 endif
 
 disp("Starting Object File")
-obj_index_filename="index/ADE20K_obj_index_mk2.tsv";
+obj_index_filename="/tf/data/index/ADE20K_obj_index_mk2.tsv";
 obj_id=fopen(obj_index_filename,"w")  ;
 obj_header=strjoin({"index","name","objectCount","proportionClassIsPart","images_present","images_part"},"\t");
 fputs(obj_id,obj_header)
@@ -100,7 +100,7 @@ fclose(obj_id)
 ## endif
 
 
-img_index_filename="index/ADE20K_img_index_mk2.tsv";
+img_index_filename="/tf/data/index/ADE20K_img_index_mk2.tsv";
 img_id=fopen(img_index_filename,"w");
 img_header=strjoin({"folder","filename","scene","width","height","classes_present","classes_part"},"\t");
 fputs(img_id,img_header);

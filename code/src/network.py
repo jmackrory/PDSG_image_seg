@@ -3,7 +3,7 @@
 # Will use transfer learning to im
 
 # May experiment with softer metrics for success.
-# For now, use the standard metrics.  
+# For now, use the standard metrics.
 
 # Will try to define a bunch of tests and lint the code for discipline.
 
@@ -26,7 +26,7 @@ import tensorflow.keras.backend as K
 
 import img_util
 import util
-    
+
 from blocks import DownBlock, MidBlock, UpBlock, SkipConnection
 
 tf.keras.backend.set_image_data_format('channels_last')
@@ -34,7 +34,7 @@ tf.keras.backend.set_image_data_format('channels_last')
 class NetworkParam(object):
 
     """NetworkParam
-    Object to hold parameters for use in constructing 
+    Object to hold parameters for use in constructing
     Neural Networks.
     """
     def __init__(self,param_file,**kwargs):
@@ -63,7 +63,7 @@ class NetworkParam(object):
         for key,value in kwargs.items():
             setattr(self,key,value)
 
-    def save_param(self,paramdict,paramfile):
+    def save_param(self, paramdict, paramfile):
         """saves parameter dict to JSON"""
         with open(paramfile,'rb') as f:
             json.save(paramdict,f)
@@ -73,11 +73,11 @@ class NetworkParam(object):
         with open(paramfile,'rb') as f:
             param_dict = json.load(f)
         return param_dict
-            
+
 
 class kerasUNet(object):
     """kerasUNet
-    Skeleton to hold network parameters, network archictecture, 
+    Skeleton to hold network parameters, network archictecture,
     and functions.
     Contains:
     build_network
@@ -101,21 +101,21 @@ class kerasUNet(object):
         Nval = 0
         for key, file_list in self.val_dict.items():
             Nval+=len(file_list)
-            
+
         self.param.train_steps = np.ceil(Ntrain/self.param.batch_size)
         self.param.val_steps = np.ceil(Nval/self.param.batch_size)
-        
+
         np.random.seed(self.param.seed)
         keras.backend.clear_session()
         self.build_network()
-        
+
     def load_param(self,param_file):
 
         param_dict = util.load_param(param_file)
-        #Now overwrite any values with the 
+        #Now overwrite any values with the
         for key,value in kwargs.items():
             setattr(self,key,value)
-        
+
     def build_network(self):
 
         #Input_shape = (W,H)
@@ -125,7 +125,7 @@ class kerasUNet(object):
         #down2_shape = (W/4, H/4)
         down2 = DownBlock(down1, filters=8, kernel_size=3, dropout=self.param.dropout,scope='Down2')
         #down3_shapes:  (W/8, H/8)
-        down3 = DownBlock(down2, filters=16, kernel_size=3, dropout=self.param.dropout,scope='Down3')        
+        down3 = DownBlock(down2, filters=16, kernel_size=3, dropout=self.param.dropout,scope='Down3')
 
         #middle layers:  mid_shape = (W/8, H/8)
         mid = MidBlock(down3, filters=16, kernel_size=3, dropout=self.param.dropout,scope='Mid')
@@ -138,12 +138,12 @@ class kerasUNet(object):
         up2 = UpBlock(up3b, filters=32, kernel_size=3,dropout=self.param.dropout, scope='Up2')
         # residual connection for results from upsampling with stuff from step before
         up2b = SkipConnection(down1,up2,32,scope='Skip2')
-        
+
         #2nd step up up1_shape = (W,H)
-        up1 = UpBlock(up2b, filters=32, kernel_size=3, dropout=self.param.dropout, scope='Up1')        
+        up1 = UpBlock(up2b, filters=32, kernel_size=3, dropout=self.param.dropout, scope='Up1')
         up1b = SkipConnection(inputs,up1,32,scope='Skip1')
 
-        #could have more 2D convolutions here. 
+        #could have more 2D convolutions here.
         #final 1D convolution  (pixel-wise Dense layer)
         #softmax to make a probability distribution across classes.
         final = Conv2D(kernel_size=1, filters=self.param.Nclasses, activation='softmax',name='FinalConv')(up1b)
@@ -157,7 +157,7 @@ class kerasUNet(object):
         """
         compute pixelwise cross-entropy across most popular classes example by example.
 
-        Input: Ytrue Tensor (Nbatch, W, H, 3)  
+        Input: Ytrue Tensor (Nbatch, W, H, 3)
                Ypred Tensor (Nbatch, W, H, Nclass)
         """
         #define a custom loss function using the pixel-wise cross entropy.
@@ -177,18 +177,18 @@ class kerasUNet(object):
             #make logical mask
             label_msk = K.equal(Ytrue_class, class_label)
             label_AND_pred = tf.cast(tf.math.logical_and(label_msk, pred_msk),tf.float32)
-            label_OR_pred = tf.cast(tf.math.logical_or(label_msk, pred_msk),tf.float32)            
+            label_OR_pred = tf.cast(tf.math.logical_or(label_msk, pred_msk),tf.float32)
             iou = K.sum(label_AND_pred)/(K.sum(label_OR_pred)+0.01)
             cost = cost+iou
         cost = cost/self.param.Nclasses
         return cost
-    
+
 
     def pixelwise_crossentropy(self, Ytrue, Ypred):
         """
         compute pixelwise cross-entropy across most popular classes example by example.
 
-        Input: Ytrue Tensor (Nbatch, W, H, 3)  
+        Input: Ytrue Tensor (Nbatch, W, H, 3)
                Ypred Tensor (Nbatch, W, H, Nclass)
         """
         #define a custom loss function using the pixel-wise cross entropy.
@@ -198,7 +198,7 @@ class kerasUNet(object):
 
         ytrue_class = (R//10)*256 + G
         #get classes_present
-        shapes = tf.cast(tf.shape(ytrue_class),tf.float32)        
+        shapes = tf.cast(tf.shape(ytrue_class),tf.float32)
         #classes_present = set(K.reshape(ytrue_class,-1))
         classes_present = tf.unique(K.reshape(ytrue_class,[K.prod(shapes)]))
         cost = 0
@@ -210,17 +210,17 @@ class kerasUNet(object):
             msk = K.equal(ytrue_class, class_label)
             cost = cost - K.sum(tf.boolean_mask(K.log(1-Ypred_c), tf.math.logical_not(msk)  ))
             cost = cost - K.sum(tf.boolean_mask(K.log(Ypred_c), msk  ))
-            
+
             #else:
-            #    #find all erroneous classes 
+            #    #find all erroneous classes
             #    cost += K.mean(K.log(1-ypred_c))/(Nclasses)
         shapes = tf.cast(tf.shape(Ypred),tf.float32)
         cost = cost/(self.param.Nclasses*shapes[1]*shapes[2])
         return cost
-        
+
     def _get_X_y_batch(self,ind,size_bucket=0):
         """given list of indices and a corresponding bucket,
-        returns a batch for training.  
+        returns a batch for training.
         """
         Wtarget = img_util.Wlist[size_bucket+1]
         Htarget = img_util.Hlist[size_bucket+1]
@@ -247,8 +247,8 @@ class kerasUNet(object):
         r = np.random.random()
         for i,v in enumerate(rand_boundary):
             if (r<v):
-                return N_in_bucket[i][0] 
-    
+                return N_in_bucket[i][0]
+
     def rand_batch_generator(self,file_dict):
         """  Generator to make random batches of data.
         Intended for use in training to endlessly
@@ -266,7 +266,7 @@ class kerasUNet(object):
         """det_batch_generator
         Load deterministic batch generator.
         Intended for use with inference/prediction
-        to deterministically loop over data once. 
+        to deterministically loop over data once.
         """
         Nb = self.param.batch_size
         for bucket,ind_list in file_dict.items():
@@ -278,10 +278,10 @@ class kerasUNet(object):
                 yield self._get_X_y_batch(ind_sub,bucket)
                 i0 = i1
                 i1 += Nb
-            #Last iter    
-            ind_sub = np.arange(i0,len(y))        
+            #Last iter
+            ind_sub = np.arange(i0,len(y))
             yield self._get_X_y_batch(ind_sub,bucket)
-            
+
     def train_network(self):
         """train_network()
         Actually train the keras model.
@@ -327,7 +327,7 @@ class kerasUNet(object):
         batch, y = self._get_X_y_batch(ind_sub,size_bucket)
         pred = self.model.predict(batch)
         return pred, batch, y
-    
+
     def evaluate(self):
         """
         Evaluates metrics by iterating over all files in file_dict
@@ -346,11 +346,11 @@ class kerasUNet(object):
 
         save_name = '/'.join([self.param.model_dir,self.param.model_name])
         self.model.save(save_name+'.model')
-        self.param.save_param(self.param,save_name+'.param')                    
+        self.param.save_param(self.param,save_name+'.param')
 
     def load_model(self,path_base):
         """loads saved model from hdf5"""
-        
+
         self.param = util.load_param(param_path+'.param')
         self.model = keras.models.load_model(path+'.model')
 
@@ -364,7 +364,7 @@ class kerasUNet(object):
         plt.figure()
         plt.subplot(121)
         plt.imshow(pred2[num].astype(int))
-        
+
         plt.subplot(122)
         tmp = np.zeros(y[num].shape)
         for i in range(2):
