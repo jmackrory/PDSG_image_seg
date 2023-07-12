@@ -11,7 +11,7 @@ RUN apt-get update && \
     # libgeos++-dev \
     # libaec0 \
     # libaec-dev \
-    wget \
+    wget
     # gfortran \
     # cmake
 

@@ -13,10 +13,6 @@ import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 
-gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.75)
-config = tf.ConfigProto(gpu_options=gpu_options)
-config.gpu_options.allow_growth = True
-session = tf.Session(config=config)
 
 import tensorflow.keras as keras
 from tensorflow.keras.layers import Input, Dropout, Dense, BatchNormalization
@@ -26,10 +22,16 @@ from tensorflow.keras.models import Model
 import tensorflow.keras.preprocessing.image as image
 import tensorflow.keras.backend as K
 
-import img_util
-import util
+from imageseg.img_util import get_training_dicts, get_common_class_index
+import imageseg.util import load_param, save_param
 
-from blocks import DownBlock, MidBlock, UpBlock, SkipConnection
+from imageseg.blocks import DownBlock, MidBlock, UpBlock, SkipConnection
+
+
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.75)
+config = tf.ConfigProto(gpu_options=gpu_options)
+config.gpu_options.allow_growth = True
+session = tf.Session(config=config)
 
 tf.keras.backend.set_image_data_format('channels_last')
 
@@ -56,7 +58,7 @@ class NetworkParam(object):
         self.kernel_size = 3
         self.pool = 2
 
-        param_dict = util.load_param(param_file)
+        param_dict = load_param(param_file)
         #Now overwrite any values with the paramfile
         for key,value in param_dict.items():
             setattr(self,key,value)
@@ -94,8 +96,8 @@ class kerasUNet(object):
     def __init__(self,index_df,object_df,param_file='basic.param'):
         self.index  =  index_df
         self.param = NetworkParam(param_file)
-        self.train_dict, self.val_dict = img_util.get_training_dicts(index_df,self.param.size_buckets,self.param.val_fold)
-        self.class_lookup = img_util.get_common_class_index(object_df,Nclasses=self.param.Nclasses)
+        self.train_dict, self.val_dict = get_training_dicts(index_df,self.param.size_buckets,self.param.val_fold)
+        self.class_lookup = get_common_class_index(object_df,Nclasses=self.param.Nclasses)
 
         Ntrain = 0
         for key, file_list in self.train_dict.items():
