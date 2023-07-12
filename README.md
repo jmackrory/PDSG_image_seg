@@ -19,8 +19,11 @@ ways to scale up).
 
 
 Files:
- - network.py - contains network builder, compiler, fit, batching and metrics. 
- - blocks.py - contains blocks for convolutional network and up/down sampling. 
- - img_util.py - functions to load indexes, transform indices, plot images.
- - read\_clean\_index.m   - function to transform ADE20K index.mat file into tsv with desired features.
- - basic.param - parameters to load into network.
+/code/src
+     - network.py - contains network builder, compiler, fit, batching and metrics. 
+    - blocks.py - contains blocks for convolutional network and up/down sampling. 
+    - img_util.py - functions to load indexes, transform indices, plot images.
+    - basic.param - parameters to load into network.
+/code
+    - read\_clean\_index.m   - function to transform ADE20K index.mat file into tsv with desired features.
+

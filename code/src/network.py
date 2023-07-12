@@ -7,6 +7,8 @@
 
 # Will try to define a bunch of tests and lint the code for discipline.
 
+import json
+
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt

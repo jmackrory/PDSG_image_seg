@@ -1,0 +1,10 @@
+local*
+.ipynb_checkpoints*
+data/*
+*__pycache__*
+.#*
+*venv*
+.vscode
+.mypy*
+.history
+*egg-info
