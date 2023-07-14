@@ -1,7 +1,7 @@
 services:
 
-  tfjupyter:
-    container_name: tfjupyter
+  tf-img:
+    container_name: tf-img
     build:
       dockerfile: ./docker/Dockerfile.tfjupyter
       context: ../

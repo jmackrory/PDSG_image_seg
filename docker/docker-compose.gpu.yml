@@ -1,7 +1,7 @@
 services:
 
-  tfjupyter-gpu:
-    container_name: tfjupyter-gpu
+  tf-gpu-img:
+    container_name: tf-gpu-img
     build:
       dockerfile: ./docker/Dockerfile.tfjupyter
       context: ../
