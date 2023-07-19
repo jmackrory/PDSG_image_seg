@@ -10,9 +10,10 @@ services:
     #user: ${DOCKER_UID:-1000}:${DOCKER_GID:-1000}
     volumes:
       - ../data:/tf/data
+      - ../models/tf/models
       - ../notebooks:/tf/notebooks
       - ../scripts:/tf/scripts
-      - ../uselec_module:/home/uselec_module
+      - ../code:/home/code
       - ../.jupyter:/root/.jupyter
       - ../.history:/tf/.history
     ports:
