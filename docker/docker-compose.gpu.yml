@@ -10,7 +10,7 @@ services:
     #user: ${DOCKER_UID:-1000}:${DOCKER_GID:-1000}
     volumes:
       - ../data:/tf/data
-      - ../models/tf/models
+      - ../models:/tf/models
       - ../notebooks:/tf/notebooks
       - ../scripts:/tf/scripts
       - ../code:/home/code

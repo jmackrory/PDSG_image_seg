@@ -6,5 +6,6 @@ ipdb
 ipykernel >= 6.0.0
 tqdm==4.64.1
 line_profiler
+imageio
 jsonlines
 setuptools<60

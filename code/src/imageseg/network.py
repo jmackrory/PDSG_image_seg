@@ -31,12 +31,15 @@ from imageseg.util import load_param, save_param
 from imageseg.blocks import DownBlock, MidBlock, UpBlock, SkipConnection
 
 
-gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.75)
-config = tf.ConfigProto(gpu_options=gpu_options)
-config.gpu_options.allow_growth = True
-session = tf.Session(config=config)
+#gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.75)
+#config = tf.ConfigProto(gpu_options=gpu_options)
+#config.gpu_options.allow_growth = True
+#session = tf.Session(config=config)
+
 
 K.set_image_data_format("channels_last")
+
+PARAM_PATH = "/tf/models/params"
 
 
 class NetworkParam(object):
@@ -102,6 +105,7 @@ class kerasUNet(object):
 
     def __init__(self, index_df, object_df, param_file="basic.param"):
         self.index = index_df
+
         self.param = NetworkParam(param_file)
         self.train_dict, self.val_dict = get_training_dicts(
             index_df, self.param.size_buckets, self.param.val_fold

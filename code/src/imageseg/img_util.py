@@ -1,3 +1,4 @@
+import os
 import subprocess
 from os import walk
 import re
@@ -10,6 +11,11 @@ import matplotlib.pyplot as plt
 Hlist = [0, 240, 480, 1200, 2400, 10000]
 Wlist = [0, 320, 640, 1600, 3200, 20000]
 Nbucket = len(Hlist) - 1
+
+INDEX_PATH = "/tf/data/index"
+IMG_INDEX_FILE = "ADE20K_img_index_mk2.tsv"
+OBJ_INDEX_FILE = "ADE20K_obj_index_mk2.tsv"
+DATA_PATH = "/tf/data/ADE20K_2016_07_26"
 
 # def get_img_size(path_str):
 #     """get tuple for width, height of image"""
@@ -46,13 +52,15 @@ Nbucket = len(Hlist) - 1
 
 # load new img index file.
 # need to adjust augment file to new format.
-def load_img_index_df(index_str="index/ADE20K_img_index_mk2.tsv"):
-    index_df = pd.read_csv(index_str, sep="\t")
+def load_img_index_df(index_str=IMG_INDEX_FILE):
+    index_path = os.path.join(INDEX_PATH, index_str)
+    index_df = pd.read_csv(index_path, sep="\t")
     return index_df
 
 
-def load_object_index_df(file_name="index/ADE20K_obj_index_mk2.tsv"):
-    object_df = pd.read_csv(file_name, sep="\t")
+def load_object_index_df(index_str=OBJ_INDEX_FILE):
+    index_path = os.path.join(INDEX_PATH, index_str)
+    object_df = pd.read_csv(index_path, sep="\t")
     object_df.sort_values("objectCount", inplace=True)
     return object_df
 
@@ -79,8 +87,8 @@ def augment_index_df(index_df):
 
     # width = index_df['size'].apply(lambda x: eval(x)[0])
     # height = index_df['size'].apply(lambda x: eval(x)[1])
-    width = index_df["width"]  # = width
-    height = index_df["height"]  # = height
+    width = index_df["width"]
+    height = index_df["height"]
 
     if (np.max(width) > Wlist[-1]) | (np.max(height) > Hlist[-1]):
         raise Exception("Image size larger than largest maximum bucket!")
