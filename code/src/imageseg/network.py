@@ -8,6 +8,7 @@
 # Will try to define a bunch of tests and lint the code for discipline.
 
 import json
+import os
 
 import tensorflow as tf
 import numpy as np
@@ -19,6 +20,7 @@ import tensorflow.keras.preprocessing.image as tfimage
 import tensorflow.keras.backend as K
 
 from imageseg.img_util import (
+    DATA_PATH,
     get_color_from_pred,
     get_training_dicts,
     get_common_class_index,
@@ -36,10 +38,9 @@ from imageseg.blocks import DownBlock, MidBlock, UpBlock, SkipConnection
 #config.gpu_options.allow_growth = True
 #session = tf.Session(config=config)
 
-
 K.set_image_data_format("channels_last")
 
-PARAM_PATH = "/tf/models/params"
+PARAM_PATH = "/tf/models"
 
 
 class NetworkParam(object):
@@ -67,7 +68,7 @@ class NetworkParam(object):
         self.pool = 2
 
         self.param_file = param_file
-        param_dict = load_param(param_file)
+        param_dict = load_param(self.param_file)
         # Now overwrite any values with the paramfile
         for key, value in param_dict.items():
             setattr(self, key, value)
@@ -105,8 +106,8 @@ class kerasUNet(object):
 
     def __init__(self, index_df, object_df, param_file="basic.param"):
         self.index = index_df
-
-        self.param = NetworkParam(param_file)
+        param_path = os.path.join(PARAM_PATH, param_file)
+        self.param = NetworkParam(param_path)
         self.train_dict, self.val_dict = get_training_dicts(
             index_df, self.param.size_buckets, self.param.val_fold
         )
@@ -146,24 +147,24 @@ class kerasUNet(object):
             down1, filters=8, kernel_size=3, dropout=self.param.dropout, scope="Down2"
         )
         # down3_shapes:  (W/8, H/8)
-        down3 = DownBlock(
-            down2, filters=16, kernel_size=3, dropout=self.param.dropout, scope="Down3"
-        )
+        #down3 = DownBlock(
+        #    down2, filters=16, kernel_size=3, dropout=self.param.dropout, scope="Down3"
+        #)
 
         # middle layers:  mid_shape = (W/8, H/8)
         mid = MidBlock(
-            down3, filters=16, kernel_size=3, dropout=self.param.dropout, scope="Mid"
+            down2, filters=16, kernel_size=3, dropout=self.param.dropout, scope="Mid"
         )
 
         # 1st step up.  up2_shape = (W/4, H/4)
-        up3 = UpBlock(
-            mid, filters=32, kernel_size=3, dropout=self.param.dropout, scope="Up3"
-        )
-        up3b = SkipConnection(down2, up3, 32, scope="Skip3")
+        #up3 = UpBlock(
+        #    mid, filters=32, kernel_size=3, dropout=self.param.dropout, scope="Up3"
+        #)
+        #up3b = SkipConnection(down2, up3, 32, scope="Skip3")
 
         # 1st step up.  up2_shape = (W/2, H/2)
         up2 = UpBlock(
-            up3b, filters=32, kernel_size=3, dropout=self.param.dropout, scope="Up2"
+            mid, filters=32, kernel_size=3, dropout=self.param.dropout, scope="Up2"
         )
         # residual connection for results from upsampling with stuff from step before
         up2b = SkipConnection(down1, up2, 32, scope="Skip2")
@@ -197,6 +198,7 @@ class kerasUNet(object):
                Ypred Tensor (Nbatch, W, H, Nclass)
         """
         # define a custom loss function using the pixel-wise cross entropy.
+        # JM: currently bugged and returned zero for all results.  should be similar to pixelwise cross entropy.
         # Nb,W,H,Nc = Ypred.shape
         R = Ytrue[:, :, :, 0]
         G = Ytrue[:, :, :, 1]
@@ -216,7 +218,7 @@ class kerasUNet(object):
                 tf.math.logical_and(label_msk, pred_msk), tf.float32
             )
             label_OR_pred = tf.cast(tf.math.logical_or(label_msk, pred_msk), tf.float32)
-            iou = K.sum(label_AND_pred) / (K.sum(label_OR_pred) + 0.01)
+            iou = K.sum(label_AND_pred) / (K.sum(label_OR_pred) + self.param.eps)
             cost = cost + iou
         cost = cost / self.param.Nclasses
         return cost
@@ -235,12 +237,14 @@ class kerasUNet(object):
 
         ytrue_class = (R // 10) * 256 + G
         # get classes_present
+        # JM note: could use float16 to reduce mem?
         shapes = tf.cast(tf.shape(ytrue_class), tf.float32)
         # classes_present = set(K.reshape(ytrue_class,-1))
         classes_present = tf.unique(K.reshape(ytrue_class, [K.prod(shapes)]))
         cost = 0
         for i, class_label in enumerate(self.class_lookup):
             # get numerical value associated with class cl
+            # clip to avoid over/underflow issues from log.
             Ypred_c = K.clip(Ypred[:, :, :, i], self.param.eps, 1 - self.param.eps)
             # if class_label in classes_present:
             # make logical mask
@@ -269,7 +273,7 @@ class kerasUNet(object):
         y = np.zeros([Nb, Wtarget, Htarget, 3])
         for j, i in enumerate(ind):
             row = self.index.iloc[i]
-            X_name = "/".join([row["folder"], row["filename"]])
+            X_name = os.path.join(DATA_PATH, row["folder"], row["filename"])
             y_name = X_name[:-4] + "_seg.png"
             X[j] = tfimage.load_img(X_name, target_size=(Wtarget, Htarget))
             y[j] = tfimage.load_img(y_name, target_size=(Wtarget, Htarget))
@@ -278,6 +282,7 @@ class kerasUNet(object):
     def get_random_train_bucket(self, file_dict):
         """generator to pick a random allowed_bucket using relative sizes"""
         # list of tuples with key and number in each bucket.
+        # Note: opportunity to calculate the rand_boundary once, rather than every iteration.
         N_in_bucket = [(key, len(val)) for key, val in file_dict.items()]
         vals = [x[1] for x in N_in_bucket]
         # maps those sizes to [0,1) interval to randomly select one
@@ -294,6 +299,7 @@ class kerasUNet(object):
 
         dict - dict of list of files to lookup
         """
+        # JM: need to allow a validation-fold number to be picked here.
         while True:
             size_bucket = self.get_random_train_bucket(file_dict)
             ind_sub = np.random.choice(
@@ -329,7 +335,7 @@ class kerasUNet(object):
         Output: None
         Side-effect: Trains self.model.
         """
-        self.model.fit_generator(
+        self.model.fit(
             self.rand_batch_generator(self.train_dict),
             epochs=self.param.Nepoch,
             steps_per_epoch=self.param.train_steps,
@@ -399,21 +405,22 @@ class kerasUNet(object):
         save_name = self._get_save_name()
         self.model = load_model(save_name)
 
-    def get_most_likely(self, pred):
+    def get_most_likely(self, pred: np.ndarray):
         """convert a (width, height, Nclass) array to (width,height,3) array R/G colors."""
         return get_color_from_pred(pred, self.class_lookup)
 
-    def compare_pred_images(self, pred, y, num=0):
+    def compare_pred_images(self, pred: np.ndarray, y: np.ndarray, num=0):
         plt.figure()
-        plt.subplot(121)
-        plt.imshow(pred2[num].astype(int))
+        ax1 = plt.subplot(121)
+        plt.imshow(pred[num].astype(int))
+        ax1.set_title('Pred')
 
-        plt.subplot(122)
+        ax2 = plt.subplot(122)
         tmp = np.zeros(y[num].shape)
         for i in range(2):
             tmp[:, :, i] = y[num, :, :, i]
         plt.imshow(tmp.astype(int))
-
+        ax2.set_title('True')
 
 if __name__ == "__main__":
     index_df, object_df = load_and_clean_indices()

@@ -37,8 +37,6 @@ Medium set (100MB) - 1k images, various sizes
 Full dataset       - PLEASE ONLY DOWNLOAD AT HOME
 
 
-
-
 Approaches:
 Clustering
 Support Vector Machine
@@ -54,3 +52,9 @@ Sizing: There's around 20k images.
 Another quarter are in the 1600x1200 bucket.
 
 And a small fraction are larger than 3200x2400
+
+## Running Tensorflow Docker:
+- "docker run --gpus all --rm nvidia/cuda:11.0.3-base-ubuntu18.04 nvidia-smi"
+To check GPU is available.
+
+- modify /etc/nvidia-container-runtime/config.toml from "@/sbin/ldconfig" to "/sbin/ldconfig"

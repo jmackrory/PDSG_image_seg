@@ -1,18 +1,18 @@
 {
-"learning_rate": 0.001,
+"learning_rate": 0.0001,
 "activation": "relu",
 "regtype": "dropout",
 "dropout": 0.05,
-"size_buckets": [0],
+"size_buckets": [0, 1],
 "val_fold": 0,
 "metrics": ["IOU"],
 "optimizer": "adam",
 "loss":" pixelwise_crossentropy",
 "seed": 1029,
 "eps": 1E-7,
-"batch_size": 5,
-"Nclasses": 50,
-"Nepoch": 1,
+"batch_size": 3,
+"Nclasses": 30,
+"Nepoch": 4,
 "model_name": "UNet1",
 "model_dir": "keras_models"
 }

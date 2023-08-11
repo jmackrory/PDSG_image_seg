@@ -12,6 +12,7 @@ def DownBlock(inputs, filters=32, kernel_size=3, alpha=0.1, dropout=0.2, scope="
     Args: inputs - Input Batch of Images [Nbatch, W, H,Nchannel]
     Returns: d - Output Batch of Images [Nbatch, W/2, H/2, filters]
     """
+    #JM note: allow downsampling size to be changed.
     with K.name_scope(scope):
         c = Conv2D(
             filters=filters,

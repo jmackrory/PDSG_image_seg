@@ -15,7 +15,7 @@ Nbucket = len(Hlist) - 1
 INDEX_PATH = "/tf/data/index"
 IMG_INDEX_FILE = "ADE20K_img_index_mk2.tsv"
 OBJ_INDEX_FILE = "ADE20K_obj_index_mk2.tsv"
-DATA_PATH = "/tf/data/ADE20K_2016_07_26"
+DATA_PATH = "/tf/data"
 
 # def get_img_size(path_str):
 #     """get tuple for width, height of image"""
