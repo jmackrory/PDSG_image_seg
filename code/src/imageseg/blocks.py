@@ -1,10 +1,12 @@
 import tensorflow.keras.backend as K
 from tensorflow.keras.layers import Dropout, BatchNormalization
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, UpSampling2D, Conv2DTranspose
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, UpSampling2D
 from tensorflow.keras.layers import LeakyReLU, Add
 
 
-def DownBlock(inputs, filters=32, kernel_size=3, alpha=0.1, dropout=0.2, scope="Down"):
+def DownBlock(
+    inputs, filters=32, kernel_size=3, poolsz=2, alpha=0.1, dropout=0.2, scope="Down"
+):
     """Make a convolutional block with DownSampling.
 
     Conv -> Batch Norm -> Leaky ReLU -> MaxPool -> Dropout
@@ -12,7 +14,7 @@ def DownBlock(inputs, filters=32, kernel_size=3, alpha=0.1, dropout=0.2, scope="
     Args: inputs - Input Batch of Images [Nbatch, W, H,Nchannel]
     Returns: d - Output Batch of Images [Nbatch, W/2, H/2, filters]
     """
-    #JM note: allow downsampling size to be changed.
+    # JM note: allow downsampling size to be changed.
     with K.name_scope(scope):
         c = Conv2D(
             filters=filters,
@@ -23,7 +25,7 @@ def DownBlock(inputs, filters=32, kernel_size=3, alpha=0.1, dropout=0.2, scope="
         )(inputs)
         b = BatchNormalization(name=scope + "_BatchNorm")(c)
         r = LeakyReLU(alpha=alpha, name=scope + "_RELU")(b)
-        m = MaxPooling2D(name=scope + "_MaxPool")(r)
+        m = MaxPooling2D(name=scope + "_MaxPool", pool_size=(poolsz, poolsz))(r)
         d = Dropout(dropout, name=scope + "_Dropout")(m)
         return d
 
@@ -50,7 +52,9 @@ def MidBlock(inputs, filters=32, kernel_size=3, alpha=0.1, dropout=0.2, scope="M
         return d
 
 
-def UpBlock(inputs, filters=32, kernel_size=3, alpha=0.1, dropout=0.2, scope="Up"):
+def UpBlock(
+    inputs, filters=32, kernel_size=3, poolsz=2, alpha=0.1, dropout=0.2, scope="Up"
+):
     """Make a Convolutional block with Upscaling.
     (Can swap out Upscaling or Conv2DTranspose)
     Conv -> Batch Norm -> Leaky ReLU -> Upscale -> Dropout
@@ -67,7 +71,7 @@ def UpBlock(inputs, filters=32, kernel_size=3, alpha=0.1, dropout=0.2, scope="Up
         )(inputs)
         b = BatchNormalization(name=scope + "_BatchNorm")(c)
         r = LeakyReLU(alpha=alpha, name=scope + "_RELU")(b)
-        m = UpSampling2D(name=scope + "_Upscale")(r)
+        m = UpSampling2D(size=(poolsz, poolsz), name=scope + "_Upscale")(r)
         d = Dropout(dropout, name=scope + "_Dropout")(m)
         return d
 

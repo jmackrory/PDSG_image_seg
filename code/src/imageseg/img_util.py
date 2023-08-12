@@ -60,7 +60,7 @@ def load_img_index_df(index_str=IMG_INDEX_FILE):
 
 def load_object_index_df(index_str=OBJ_INDEX_FILE):
     index_path = os.path.join(INDEX_PATH, index_str)
-    object_df = pd.read_csv(index_path, sep="\t")
+    object_df = pd.read_csv(index_path, sep="\t", index_col="index")
     object_df.sort_values("objectCount", inplace=True)
     return object_df
 
@@ -122,7 +122,7 @@ def plot_sizes(index_df, bucket=0):
 
 
 def plot_counts(index_df, bucket=None):
-    if bucket == None:
+    if bucket is None:
         msk = [True] * len(index_df)
     else:
         msk = index_df["size_bucket"] == bucket
@@ -212,6 +212,7 @@ def get_training_dicts(index_df, size_buckets=[0, 1], val_fold=0):
 
 def get_common_class_index(object_df, ispart_frac=0.5, Nclasses=50):
     # try to consider big features first.
+    # JM: this seems backwards.
     msk = object_df["proportionClassIsPart"] < ispart_frac
     ind = object_df[msk]["index"].values
     return ind[:Nclasses]

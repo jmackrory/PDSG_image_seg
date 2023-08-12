@@ -6,8 +6,8 @@ John managed to extract the names from the files.
 I want to check if there also included the types of objects in each image.
 
 Two - sampling.
-Can I use those paths to sample the images. 
-(I'm thinking of first a random sample of around 5% of the data.  
+Can I use those paths to sample the images.
+(I'm thinking of first a random sample of around 5% of the data.
 
 Three - presentation
 
@@ -16,7 +16,7 @@ Thank sponsors
 Thank regulars for helping pull together and organize data
 Matt B., John B., Julie, Josh, Kenny, Zach, Isil, Tal
 
-introduce problem 
+introduce problem
  - image segmentation  (why? Prepration step for more complicated work. Simplify recognition.)
 
 introduce data
@@ -24,7 +24,7 @@ introduce data
  - images with handmade segmentation and annotations.
  - various sizes, topics.
 
-Format 
+Format
  JPG initial image
  png segments
  (text annotations)
@@ -32,7 +32,7 @@ Format
 Providing:
 Tiny, Small, Medium sets available at dive-into.info
 Tiny Set  (1MB)    - smallest, simplest images
-Small Set (20MB)   - 
+Small Set (20MB)   -
 Medium set (100MB) - 1k images, various sizes
 Full dataset       - PLEASE ONLY DOWNLOAD AT HOME
 

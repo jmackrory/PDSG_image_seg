@@ -28,15 +28,15 @@ from imageseg.img_util import (
     Hlist,
     load_and_clean_indices,
 )
-from imageseg.util import load_param, save_param
+from imageseg.util import load_param
 
 from imageseg.blocks import DownBlock, MidBlock, UpBlock, SkipConnection
 
 
-#gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.75)
-#config = tf.ConfigProto(gpu_options=gpu_options)
-#config.gpu_options.allow_growth = True
-#session = tf.Session(config=config)
+# gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.75)
+# config = tf.ConfigProto(gpu_options=gpu_options)
+# config.gpu_options.allow_growth = True
+# session = tf.Session(config=config)
 
 K.set_image_data_format("channels_last")
 
@@ -66,6 +66,7 @@ class NetworkParam(object):
         self.Nepoch = 5
         self.kernel_size = 3
         self.pool = 2
+        self.score_tree = False
 
         self.param_file = param_file
         param_dict = load_param(self.param_file)
@@ -76,6 +77,12 @@ class NetworkParam(object):
         # Now overwrite any values with the kwargs.
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+        self.Nclasses_final = (
+            np.ceil(np.log2(self.Nclasses))
+            if self.score_tree is True
+            else self.Nclasses
+        )
 
     def save_param(self, paramdict, paramfile):
         """saves parameter dict to JSON"""
@@ -89,7 +96,7 @@ class NetworkParam(object):
         return param_dict
 
 
-class kerasUNet(object):
+class kerasUNetBase(object):
     """kerasUNet
     Skeleton to hold network parameters, network archictecture,
     and functions.
@@ -114,6 +121,8 @@ class kerasUNet(object):
         self.class_lookup = get_common_class_index(
             object_df, Nclasses=self.param.Nclasses
         )
+
+        self._get_bucket_boundaries(self.train_dict)
 
         Ntrain = 0
         for key, file_list in self.train_dict.items():
@@ -140,47 +149,81 @@ class kerasUNet(object):
         # down1_shape = (W/2, H/2)
         inputs = Input(shape=(None, None, 3))
         down1 = DownBlock(
-            inputs, filters=4, kernel_size=3, dropout=self.param.dropout, scope="Down1"
+            inputs,
+            filters=self.param.fd1,
+            kernel_size=self.param.kd1,
+            poolsz=self.param.poolsz,
+            dropout=self.param.dropout,
+            scope="Down1",
         )
         # down2_shape = (W/4, H/4)
         down2 = DownBlock(
-            down1, filters=8, kernel_size=3, dropout=self.param.dropout, scope="Down2"
+            down1,
+            filters=self.param.fd2,
+            kernel_size=self.param.kd2,
+            poolsz=self.param.poolsz,
+            dropout=self.param.dropout,
+            scope="Down2",
         )
         # down3_shapes:  (W/8, H/8)
-        #down3 = DownBlock(
-        #    down2, filters=16, kernel_size=3, dropout=self.param.dropout, scope="Down3"
-        #)
+        # down3 = DownBlock(
+        #    down2,
+        #    filters=self.param.fd3,
+        #    kernel_size=self.param.kd3,
+        #    dropout=self.param.dropout,
+        #    poolsz=self.param.poolsz,
+        #    scope="Down3"
+        # )
 
         # middle layers:  mid_shape = (W/8, H/8)
         mid = MidBlock(
-            down2, filters=16, kernel_size=3, dropout=self.param.dropout, scope="Mid"
+            down2,
+            filters=self.param.fmid,
+            kernel_size=self.param.kmid,
+            dropout=self.param.dropout,
+            scope="Mid",
         )
 
         # 1st step up.  up2_shape = (W/4, H/4)
-        #up3 = UpBlock(
-        #    mid, filters=32, kernel_size=3, dropout=self.param.dropout, scope="Up3"
-        #)
-        #up3b = SkipConnection(down2, up3, 32, scope="Skip3")
+        # up3 = UpBlock(
+        #    mid,
+        #    filters=self.param.fu3,
+        #    kernel_size=self.param.ku3,
+        #    dropout=self.param.dropout,
+        #    poolsz = self.param.poolsz,
+        #    scope="Up3"
+        # )
+        # up3b = SkipConnection(down2, up3, self.param.fu3, scope="Skip3")
 
         # 1st step up.  up2_shape = (W/2, H/2)
         up2 = UpBlock(
-            mid, filters=32, kernel_size=3, dropout=self.param.dropout, scope="Up2"
+            mid,
+            filters=self.param.fu2,
+            kernel_size=self.param.ku2,
+            poolsz=self.param.poolsz,
+            dropout=self.param.dropout,
+            scope="Up2",
         )
         # residual connection for results from upsampling with stuff from step before
-        up2b = SkipConnection(down1, up2, 32, scope="Skip2")
+        up2b = SkipConnection(down1, up2, self.param.fu2, scope="Skip2")
 
         # 2nd step up up1_shape = (W,H)
         up1 = UpBlock(
-            up2b, filters=32, kernel_size=3, dropout=self.param.dropout, scope="Up1"
+            up2b,
+            filters=self.param.fu1,
+            kernel_size=self.param.ku1,
+            poolsz=self.param.poolsz,
+            dropout=self.param.dropout,
+            scope="Up1",
         )
-        up1b = SkipConnection(inputs, up1, 32, scope="Skip1")
+        up1b = SkipConnection(inputs, up1, self.param.fu1, scope="Skip1")
 
         # could have more 2D convolutions here.
         # final 1D convolution  (pixel-wise Dense layer)
         # softmax to make a probability distribution across classes.
         final = Conv2D(
             kernel_size=1,
-            filters=self.param.Nclasses,
+            filters=self.param.Nclasses_final,
             activation="softmax",
             name="FinalConv",
         )(up1b)
@@ -198,30 +241,7 @@ class kerasUNet(object):
                Ypred Tensor (Nbatch, W, H, Nclass)
         """
         # define a custom loss function using the pixel-wise cross entropy.
-        # JM: currently bugged and returned zero for all results.  should be similar to pixelwise cross entropy.
-        # Nb,W,H,Nc = Ypred.shape
-        R = Ytrue[:, :, :, 0]
-        G = Ytrue[:, :, :, 1]
-
-        Ytrue_class = (R // 10) * 256 + G
-        # get classes_present
-        # classes_present = set(K.reshape(ytrue_class,-1))
-        # classes_present = tf.unique(K.reshape(ytrue_class,-1))
-        cost = 0
-        for i, class_label in enumerate(self.class_lookup):
-            # get numerical value associated with class cl
-            pred_msk = Ypred[:, :, :, i] > 0.5
-            # if class_label in classes_present:
-            # make logical mask
-            label_msk = K.equal(Ytrue_class, class_label)
-            label_AND_pred = tf.cast(
-                tf.math.logical_and(label_msk, pred_msk), tf.float32
-            )
-            label_OR_pred = tf.cast(tf.math.logical_or(label_msk, pred_msk), tf.float32)
-            iou = K.sum(label_AND_pred) / (K.sum(label_OR_pred) + self.param.eps)
-            cost = cost + iou
-        cost = cost / self.param.Nclasses
-        return cost
+        raise NotImplementedError()
 
     def pixelwise_crossentropy(self, Ytrue, Ypred):
         """
@@ -230,67 +250,29 @@ class kerasUNet(object):
         Input: Ytrue Tensor (Nbatch, W, H, 3)
                Ypred Tensor (Nbatch, W, H, Nclass)
         """
-        # define a custom loss function using the pixel-wise cross entropy.
-        # W,H,Nc = tf.shape(Ypred)
-        R = Ytrue[:, :, :, 0]
-        G = Ytrue[:, :, :, 1]
-
-        ytrue_class = (R // 10) * 256 + G
-        # get classes_present
-        # JM note: could use float16 to reduce mem?
-        shapes = tf.cast(tf.shape(ytrue_class), tf.float32)
-        # classes_present = set(K.reshape(ytrue_class,-1))
-        classes_present = tf.unique(K.reshape(ytrue_class, [K.prod(shapes)]))
-        cost = 0
-        for i, class_label in enumerate(self.class_lookup):
-            # get numerical value associated with class cl
-            # clip to avoid over/underflow issues from log.
-            Ypred_c = K.clip(Ypred[:, :, :, i], self.param.eps, 1 - self.param.eps)
-            # if class_label in classes_present:
-            # make logical mask
-            msk = K.equal(ytrue_class, class_label)
-            cost = cost - K.sum(
-                tf.boolean_mask(K.log(1 - Ypred_c), tf.math.logical_not(msk))
-            )
-            cost = cost - K.sum(tf.boolean_mask(K.log(Ypred_c), msk))
-
-            # else:
-            #    #find all erroneous classes
-            #    cost += K.mean(K.log(1-ypred_c))/(Nclasses)
-        shapes = tf.cast(tf.shape(Ypred), tf.float32)
-        cost = cost / (self.param.Nclasses * shapes[1] * shapes[2])
-        return cost
+        raise NotImplementedError()
 
     def _get_X_y_batch(self, ind, size_bucket=0):
         """given list of indices and a corresponding bucket,
         returns a batch for training.
         """
-        Wtarget = Wlist[size_bucket + 1]
-        Htarget = Hlist[size_bucket + 1]
+        raise NotImplementedError()
 
-        Nb = len(ind)
-        X = np.zeros([Nb, Wtarget, Htarget, 3])
-        y = np.zeros([Nb, Wtarget, Htarget, 3])
-        for j, i in enumerate(ind):
-            row = self.index.iloc[i]
-            X_name = os.path.join(DATA_PATH, row["folder"], row["filename"])
-            y_name = X_name[:-4] + "_seg.png"
-            X[j] = tfimage.load_img(X_name, target_size=(Wtarget, Htarget))
-            y[j] = tfimage.load_img(y_name, target_size=(Wtarget, Htarget))
-        return X, y
+    def _get_bucket_boundaries(self, file_dict):
+        self._N_in_bucket = [(key, len(val)) for key, val in file_dict.items()]
+        vals = [x[1] for x in self._N_in_bucket]
+        # maps those sizes to [0,1) interval to randomly select one
+        self._rand_boundary = np.cumsum(vals) / np.sum(vals)
 
     def get_random_train_bucket(self, file_dict):
         """generator to pick a random allowed_bucket using relative sizes"""
         # list of tuples with key and number in each bucket.
         # Note: opportunity to calculate the rand_boundary once, rather than every iteration.
-        N_in_bucket = [(key, len(val)) for key, val in file_dict.items()]
-        vals = [x[1] for x in N_in_bucket]
-        # maps those sizes to [0,1) interval to randomly select one
-        rand_boundary = np.cumsum(vals) / np.sum(vals)
+
         r = np.random.random()
-        for i, v in enumerate(rand_boundary):
+        for i, v in enumerate(self._rand_boundary):
             if r < v:
-                return N_in_bucket[i][0]
+                return self._N_in_bucket[i][0]
 
     def rand_batch_generator(self, file_dict):
         """Generator to make random batches of data.
@@ -315,7 +297,6 @@ class kerasUNet(object):
         """
         Nb = self.param.batch_size
         for bucket, ind_list in file_dict.items():
-            N_in_bucket = len(ind_list)
             i0 = 0
             i1 = Nb
             while i1 < len(ind_list):
@@ -413,18 +394,265 @@ class kerasUNet(object):
         plt.figure()
         ax1 = plt.subplot(121)
         plt.imshow(pred[num].astype(int))
-        ax1.set_title('Pred')
+        ax1.set_title("Pred")
 
         ax2 = plt.subplot(122)
         tmp = np.zeros(y[num].shape)
         for i in range(2):
             tmp[:, :, i] = y[num, :, :, i]
         plt.imshow(tmp.astype(int))
-        ax2.set_title('True')
+        ax2.set_title("True")
+
+
+class kerasUNetLinear(kerasUNetBase):
+    """kerasUNetLinear
+
+    Uses one output layer per class.
+
+    Skeleton to hold network parameters, network archictecture,
+    and functions.
+    Contains:
+    build_network
+    batch_generator
+    train_network
+    rand_batch_generator
+    det_batch_generator
+    evaluate_network
+    save_model
+    load_model
+    """
+
+    def __init__(self, index_df, object_df, param_file="basic.param"):
+        super().__init__(index_df, object_df, param_file)
+
+    def get_class_label(self, Y):
+        R = Y[:, :, :, 0]
+        G = Y[:, :, :, 1]
+
+        ytrue = (R // 10) * 256 + G
+        return ytrue
+
+    def _get_X_y_batch(self, ind, size_bucket=0):
+        """given list of indices and a corresponding bucket,
+        returns a batch for training.
+        """
+        Wtarget = Wlist[size_bucket + 1]
+        Htarget = Hlist[size_bucket + 1]
+
+        Nb = len(ind)
+        X = np.zeros([Nb, Wtarget, Htarget, 3])
+        y = np.zeros([Nb, Wtarget, Htarget, 3])
+        for j, i in enumerate(ind):
+            row = self.index.iloc[i]
+            X_name = os.path.join(DATA_PATH, row["folder"], row["filename"])
+            y_name = X_name[:-4] + "_seg.png"
+            X[j] = tfimage.load_img(X_name, target_size=(Wtarget, Htarget))
+            y[j] = tfimage.load_img(y_name, target_size=(Wtarget, Htarget))
+        return X, y
+
+    def IOU(self, Ytrue, Ypred):
+        """
+        compute pixelwise cross-entropy across most popular classes example by example.
+
+        Input: Ytrue Tensor (Nbatch, W, H, 3)
+               Ypred Tensor (Nbatch, W, H, Nclass)
+        """
+        # define a custom loss function using the pixel-wise cross entropy.
+        # JM: currently bugged and returned zero for all results.  should be similar to pixelwise cross entropy.
+        # Nb,W,H,Nc = Ypred.shape
+        R = Ytrue[:, :, :, 0]
+        G = Ytrue[:, :, :, 1]
+
+        Ytrue_class = (R // 10) * 256 + G
+        # get classes_present
+        # classes_present = set(K.reshape(ytrue_class,-1))
+        # classes_present = tf.unique(K.reshape(ytrue_class,-1))
+        cost = 0
+        for i, class_label in enumerate(self.class_lookup):
+            # get numerical value associated with class cl
+            pred_msk = Ypred[:, :, :, i] > 0.5
+            # if class_label in classes_present:
+            # make logical mask
+            label_msk = K.equal(Ytrue_class, class_label)
+            label_AND_pred = tf.cast(
+                tf.math.logical_and(label_msk, pred_msk), tf.float32
+            )
+            label_OR_pred = tf.cast(tf.math.logical_or(label_msk, pred_msk), tf.float32)
+            iou = K.sum(label_AND_pred) / (K.sum(label_OR_pred) + self.param.eps)
+            cost = cost + iou
+        cost = cost / self.param.Nclasses
+        return cost
+
+    def pixelwise_crossentropy(self, Ytrue, Ypred):
+        """
+        compute pixelwise cross-entropy across most popular classes example by example.
+
+        Input: Ytrue Tensor (Nbatch, W, H, 3)
+               Ypred Tensor (Nbatch, W, H, Nclass)
+        """
+        # define a custom loss function using the pixel-wise cross entropy.
+        # W,H,Nc = tf.shape(Ypred)
+        R = Ytrue[:, :, :, 0]
+        G = Ytrue[:, :, :, 1]
+
+        ytrue_class = (R // 10) * 256 + G
+        # get classes_present
+        # JM note: could use float16 to reduce mem?
+        shapes = tf.cast(tf.shape(ytrue_class), tf.float32)
+        # classes_present = set(K.reshape(ytrue_class,-1))
+        cost = 0
+        for i, class_label in enumerate(self.class_lookup):
+            # get numerical value associated with class cl
+            # clip to avoid over/underflow issues from log.
+            Ypred_c = K.clip(Ypred[:, :, :, i], self.param.eps, 1 - self.param.eps)
+            # if class_label in classes_present:
+            # make logical mask
+            msk = K.equal(ytrue_class, class_label)
+            cost = cost - K.sum(
+                tf.boolean_mask(K.log(1 - Ypred_c), tf.math.logical_not(msk))
+            )
+            cost = cost - K.sum(tf.boolean_mask(K.log(Ypred_c), msk))
+
+            # else:
+            #    #find all erroneous classes
+            #    cost += K.mean(K.log(1-ypred_c))/(Nclasses)
+        shapes = tf.cast(tf.shape(Ypred), tf.float32)
+        cost = cost / (self.param.Nclasses * shapes[1] * shapes[2])
+        return cost
+
+
+# should
+class kerasUNetTree(kerasUNetBase):
+    """kerasUNetLinear
+
+    Uses binary encoding from class label to layer number.
+    Cuts down on memory needed.
+
+    Skeleton to hold network parameters, network archictecture,
+    and functions.
+    Contains:
+    build_network
+    batch_generator
+    train_network
+    rand_batch_generator
+    det_batch_generator
+    evaluate_network
+    save_model
+    load_model
+    """
+
+    def __init__(self, index_df, object_df, param_file="basic.param"):
+        super().__init__(index_df, object_df, param_file)
+
+    def get_class_label(self, Y):
+        R = Y[:, :, :, 0]
+        G = Y[:, :, :, 1]
+
+        ytrue = (R // 10) * 256 + G
+        return ytrue
+
+    def _get_X_y_batch(self, ind, size_bucket=0):
+        """given list of indices and a corresponding bucket,
+        returns a batch for training.
+        """
+        Wtarget = Wlist[size_bucket + 1]
+        Htarget = Hlist[size_bucket + 1]
+
+        Nb = len(ind)
+        X = np.zeros([Nb, Wtarget, Htarget, 3])
+        y = np.zeros([Nb, Wtarget, Htarget, 3])
+        for j, i in enumerate(ind):
+            row = self.index.iloc[i]
+            X_name = os.path.join(DATA_PATH, row["folder"], row["filename"])
+            y_name = X_name[:-4] + "_seg.png"
+            X[j] = tfimage.load_img(X_name, target_size=(Wtarget, Htarget))
+            y[j] = tfimage.load_img(y_name, target_size=(Wtarget, Htarget))
+        return X, y
+
+    def IOU(self, Ytrue, Ypred):
+        """
+        compute pixelwise cross-entropy across most popular classes example by example.
+
+        Input: Ytrue Tensor (Nbatch, W, H, 3)
+               Ypred Tensor (Nbatch, W, H, Nclass)
+        """
+        # define a custom loss function using the pixel-wise cross entropy.
+        # JM: currently bugged and returned zero for all results.  should be similar to pixelwise cross entropy.
+        # Nb,W,H,Nc = Ypred.shape
+        Ytrue_class = self.get_class_label(Ytrue)
+        # get classes_present
+        # classes_present = set(K.reshape(ytrue_class,-1))
+        # classes_present = tf.unique(K.reshape(ytrue_class,-1))
+
+        # np.unpackbits(np.array([[0,1,4,7]],np.uint8)).reshape(-1,8)[:,4:]
+        cost = 0
+        for i, class_label in enumerate(self.class_lookup):
+            # get numerical value associated with class cl
+            pred_msk = Ypred[:, :, :, i] > 0.1
+            # if class_label in classes_present:
+            # make logical mask
+            label_msk = K.equal(Ytrue_class, class_label)
+            label_AND_pred = tf.cast(
+                tf.math.logical_and(label_msk, pred_msk), tf.float32
+            )
+            label_OR_pred = tf.cast(tf.math.logical_or(label_msk, pred_msk), tf.float32)
+            iou = K.sum(label_AND_pred) / (K.sum(label_OR_pred) + self.param.eps)
+            cost = cost + iou
+        cost = cost / self.param.Nclasses
+        return cost
+
+    def pixelwise_crossentropy(self, Ytrue, Ypred):
+        """
+        compute pixelwise cross-entropy across most popular classes example by example.
+
+        Input: Ytrue Tensor (Nbatch, W, H, 3)
+               Ypred Tensor (Nbatch, W, H, Nclass)
+        """
+        # define a custom loss function using the pixel-wise cross entropy.
+        # W,H,Nc = tf.shape(Ypred)
+        ytrue_class = self.get_class_label(Ytrue)
+        # get classes_present
+        # JM note: could use float16 to reduce mem?
+        shapes = tf.cast(tf.shape(ytrue_class), tf.float32)
+        # classes_present = set(K.reshape(ytrue_class,-1))
+        cost = 0
+        for i, class_label in enumerate(self.class_lookup):
+            # get numerical value associated with class cl
+            # clip to avoid over/underflow issues from log.
+            Ypred_c = K.clip(Ypred[:, :, :, i], self.param.eps, 1 - self.param.eps)
+            # if class_label in classes_present:
+            # make logical mask
+            msk = K.equal(ytrue_class, class_label)
+            cost = cost - K.sum(
+                tf.boolean_mask(K.log(1 - Ypred_c), tf.math.logical_not(msk))
+            )
+            cost = cost - K.sum(tf.boolean_mask(K.log(Ypred_c), msk))
+
+        shapes = tf.cast(tf.shape(Ypred), tf.float32)
+        cost = cost / (self.param.Nclasses * shapes[1] * shapes[2])
+        return cost
+
+
+class BinNetwork(object):
+    def __init__(self, Nmax, Ntrain):
+        pass
+
+    def build_network(self):
+        pass
+
+    def make_data(self, N):
+        pass
+
+    def train_network(self, data):
+        pass
+
+
+# make a log-tree approach to handle many more classes.  just assigned buckets based on label.
+# could use a semantic similarity notion to put in related classes.
 
 if __name__ == "__main__":
     index_df, object_df = load_and_clean_indices()
-    UNet = kerasUNet(index_df, object_df)
+    UNet = kerasUNetLinear(index_df, object_df)
     UNet.train_network()
     pred, batch, y = UNet.predict_afew(range(5))
     pred2 = UNet.get_most_likely(pred)
