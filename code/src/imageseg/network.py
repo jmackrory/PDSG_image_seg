@@ -9,10 +9,12 @@
 
 import json
 import os
+from typing import Dict
+import pandas as pd
 
 import tensorflow as tf
 import numpy as np
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # type: ignore
 
 from tensorflow.keras.layers import Input, Conv2D
 from tensorflow.keras.models import Model, load_model
@@ -33,10 +35,23 @@ from imageseg.util import load_param
 from imageseg.blocks import DownBlock, MidBlock, UpBlock, SkipConnection
 
 
-# gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.75)
+# gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.85)
 # config = tf.ConfigProto(gpu_options=gpu_options)
 # config.gpu_options.allow_growth = True
 # session = tf.Session(config=config)
+
+gpus = tf.config.list_physical_devices("GPU")
+if gpus:
+    try:
+        # Currently, memory growth needs to be the same across GPUs
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        logical_gpus = tf.config.list_logical_devices("GPU")
+        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+    except RuntimeError as e:
+        # Memory growth must be set before GPUs have been initialized
+        print(e)
+
 
 K.set_image_data_format("channels_last")
 
@@ -67,6 +82,20 @@ class NetworkParam(object):
         self.kernel_size = 3
         self.pool = 2
         self.score_tree = False
+
+        self.size_buckets = [0, 1]
+        self.val_fold = 0
+        self.train_steps = 100
+        self.val_steps = 100
+        self.Nclasses = 20
+        self.Nblocks = 2
+        self.filter_down = [16, 32]
+        self.filter_up = [32, 32]
+        self.kernel_down = 3
+        self.kernel_up = 3
+        self.poolsz = 2
+        self.fmid = 32
+        self.kmid = 3
 
         self.param_file = param_file
         param_dict = load_param(self.param_file)
@@ -111,7 +140,9 @@ class kerasUNetBase(object):
     load_model
     """
 
-    def __init__(self, index_df, object_df, param_file="basic.param"):
+    def __init__(
+        self, index_df: pd.DataFrame, object_df: pd.DataFrame, param_file="basic.param"
+    ):
         self.index = index_df
         param_path = os.path.join(PARAM_PATH, param_file)
         self.param = NetworkParam(param_path)
@@ -124,19 +155,22 @@ class kerasUNetBase(object):
 
         self._get_bucket_boundaries(self.train_dict)
 
-        Ntrain = 0
+        train_steps = 0
         for key, file_list in self.train_dict.items():
-            Ntrain += len(file_list)
-        Nval = 0
-        for key, file_list in self.val_dict.items():
-            Nval += len(file_list)
+            Nt = len(file_list)
+            train_steps += np.ceil(Nt / self.param.batch_size)
+        self.param.train_steps = train_steps
 
-        self.param.train_steps = np.ceil(Ntrain / self.param.batch_size)
-        self.param.val_steps = np.ceil(Nval / self.param.batch_size)
+        val_steps = 0
+        for key, file_list in self.val_dict.items():
+            Nt = len(file_list)
+            val_steps += np.ceil(Nt / self.param.batch_size)
+
+        self.param.val_steps = val_steps
 
         np.random.seed(self.param.seed)
         K.clear_session()
-        self.build_network()
+        self.model = self.build_network2()
 
     def load_param(self, param_file):
         param_dict = load_param(param_file)
@@ -144,7 +178,8 @@ class kerasUNetBase(object):
         for key, value in param_dict.items():
             setattr(self, key, value)
 
-    def build_network(self):
+    """
+    def build_network(self) -> tf.keras.models.Model:
         # Input_shape = (W,H)
         # down1_shape = (W/2, H/2)
         inputs = Input(shape=(None, None, 3))
@@ -166,18 +201,18 @@ class kerasUNetBase(object):
             scope="Down2",
         )
         # down3_shapes:  (W/8, H/8)
-        # down3 = DownBlock(
-        #    down2,
-        #    filters=self.param.fd3,
-        #    kernel_size=self.param.kd3,
-        #    dropout=self.param.dropout,
-        #    poolsz=self.param.poolsz,
-        #    scope="Down3"
-        # )
+        down3 = DownBlock(
+            down2,
+            filters=self.param.fd3,
+            kernel_size=self.param.kd3,
+            dropout=self.param.dropout,
+            poolsz=self.param.poolsz,
+            scope="Down3",
+        )
 
         # middle layers:  mid_shape = (W/8, H/8)
         mid = MidBlock(
-            down2,
+            down3,
             filters=self.param.fmid,
             kernel_size=self.param.kmid,
             dropout=self.param.dropout,
@@ -185,19 +220,19 @@ class kerasUNetBase(object):
         )
 
         # 1st step up.  up2_shape = (W/4, H/4)
-        # up3 = UpBlock(
-        #    mid,
-        #    filters=self.param.fu3,
-        #    kernel_size=self.param.ku3,
-        #    dropout=self.param.dropout,
-        #    poolsz = self.param.poolsz,
-        #    scope="Up3"
-        # )
-        # up3b = SkipConnection(down2, up3, self.param.fu3, scope="Skip3")
+        up3 = UpBlock(
+            mid,
+            filters=self.param.fu3,
+            kernel_size=self.param.ku3,
+            dropout=self.param.dropout,
+            poolsz=self.param.poolsz,
+            scope="Up3",
+        )
+        up3b = SkipConnection(down2, up3, self.param.fu3, scope="Skip3")
 
         # 1st step up.  up2_shape = (W/2, H/2)
         up2 = UpBlock(
-            mid,
+            up3b,
             filters=self.param.fu2,
             kernel_size=self.param.ku2,
             poolsz=self.param.poolsz,
@@ -228,10 +263,82 @@ class kerasUNetBase(object):
             name="FinalConv",
         )(up1b)
 
-        self.model = Model(inputs=inputs, outputs=final)
-        self.model.compile(
+        model = Model(inputs=inputs, outputs=final)
+        model.compile(
             loss=self.pixelwise_crossentropy, optimizer="adam", metrics=[self.IOU]
         )
+        return model
+    """
+
+    def check_network_params(self):
+        assert self.param.Nblocks >= 1
+        assert self.param.Nblocks <= 4
+        assert len(self.param.filter_down) == self.param.Nblocks
+        assert len(self.param.filter_up) == self.param.Nblocks
+        assert len(self.param.kernel_down) == self.param.Nblocks
+        assert len(self.param.kernel_up) == self.param.Nblocks
+
+    def build_network2(self) -> tf.keras.models.Model:
+        self.check_network_params()
+        # Input_shape = (W,H)
+        # down1_shape = (W/2, H/2)
+        inputs = Input(shape=(None, None, 3))
+        _in = inputs
+        down_blocks = [inputs]
+        indx = list(range(self.param.Nblocks))
+        for n in indx:
+            print(n)
+            block = DownBlock(
+                _in,
+                filters=self.param.filter_down[n],
+                kernel_size=self.param.kernel_down[n],
+                poolsz=self.param.poolsz,
+                dropout=self.param.dropout,
+                scope=f"Down{n+1}",
+            )
+            down_blocks.append(block)
+            _in = block
+
+        # middle layers:  mid_shape = (W/8, H/8)
+        mid = MidBlock(
+            _in,
+            filters=self.param.fmid,
+            kernel_size=self.param.kmid,
+            dropout=self.param.dropout,
+            scope="Mid",
+        )
+        _in = mid
+        for n in indx[::-1]:
+            print(n)
+            block = UpBlock(
+                _in,
+                filters=self.param.filter_up[n],
+                kernel_size=self.param.kernel_up[n],
+                poolsz=self.param.poolsz,
+                dropout=self.param.dropout,
+                scope=f"Up{n+1}",
+            )
+            block2 = SkipConnection(
+                down_blocks[n], block, self.param.filter_up[n], scope=f"Skip{n+1}"
+            )
+
+            _in = block2
+
+        # could have more 2D convolutions here.
+        # final 1D convolution  (pixel-wise Dense layer)
+        # softmax to make a probability distribution across classes.
+        final = Conv2D(
+            kernel_size=1,
+            filters=self.param.Nclasses_final,
+            activation="softmax",
+            name="FinalConv",
+        )(_in)
+
+        model = Model(inputs=inputs, outputs=final)
+        model.compile(
+            loss=self.pixelwise_crossentropy, optimizer="adam", metrics=[self.IOU]
+        )
+        return model
 
     def IOU(self, Ytrue, Ypred):
         """
@@ -264,7 +371,7 @@ class kerasUNetBase(object):
         # maps those sizes to [0,1) interval to randomly select one
         self._rand_boundary = np.cumsum(vals) / np.sum(vals)
 
-    def get_random_train_bucket(self, file_dict):
+    def get_random_train_bucket(self):
         """generator to pick a random allowed_bucket using relative sizes"""
         # list of tuples with key and number in each bucket.
         # Note: opportunity to calculate the rand_boundary once, rather than every iteration.
@@ -274,7 +381,7 @@ class kerasUNetBase(object):
             if r < v:
                 return self._N_in_bucket[i][0]
 
-    def rand_batch_generator(self, file_dict):
+    def rand_batch_generator(self, file_dict: Dict):
         """Generator to make random batches of data.
         Intended for use in training to endlessly
         generate samples of data.
@@ -283,30 +390,31 @@ class kerasUNetBase(object):
         """
         # JM: need to allow a validation-fold number to be picked here.
         while True:
-            size_bucket = self.get_random_train_bucket(file_dict)
+            size_bucket = self.get_random_train_bucket()
             ind_sub = np.random.choice(
                 file_dict[size_bucket], size=self.param.batch_size
             )
             yield self._get_X_y_batch(ind_sub, size_bucket)
 
-    def det_batch_generator(self, file_dict):
+    def det_batch_generator(self, file_dict: Dict):
         """det_batch_generator
         Load deterministic batch generator.
         Intended for use with inference/prediction
         to deterministically loop over data once.
         """
         Nb = self.param.batch_size
-        for bucket, ind_list in file_dict.items():
-            i0 = 0
-            i1 = Nb
-            while i1 < len(ind_list):
-                ind_sub = np.arange(i0, i1)
+        while True:
+            for bucket, ind_list in file_dict.items():
+                i0 = 0
+                i1 = Nb
+                while i1 < len(ind_list):
+                    ind_sub = np.arange(i0, i1)
+                    yield self._get_X_y_batch(ind_sub, bucket)
+                    i0 = i1
+                    i1 += Nb
+                # Last iter
+                ind_sub = np.arange(i0, len(ind_list))
                 yield self._get_X_y_batch(ind_sub, bucket)
-                i0 = i1
-                i1 += Nb
-            # Last iter
-            ind_sub = np.arange(i0, len(y))
-            yield self._get_X_y_batch(ind_sub, bucket)
 
     def train_network(self):
         """train_network()
@@ -320,9 +428,11 @@ class kerasUNetBase(object):
             self.rand_batch_generator(self.train_dict),
             epochs=self.param.Nepoch,
             steps_per_epoch=self.param.train_steps,
+            validation_data=self.det_batch_generator(self.val_dict),
+            validation_steps=self.param.val_steps,
         )
 
-    def predict_all(self, file_dict):
+    def predict_all(self, file_dict: Dict):
         """predict(X,y,vec)
         Loop over whole file_dict and predict for all samples (HUGE TASK! DONT DO IT)
         Input: X - np.array with rows of indices
@@ -468,9 +578,10 @@ class kerasUNetLinear(kerasUNetBase):
         # classes_present = set(K.reshape(ytrue_class,-1))
         # classes_present = tf.unique(K.reshape(ytrue_class,-1))
         cost = 0
+        preds = tf.math.argmax(Ypred, axis=3)
         for i, class_label in enumerate(self.class_lookup):
             # get numerical value associated with class cl
-            pred_msk = Ypred[:, :, :, i] > 0.5
+            pred_msk = preds == i
             # if class_label in classes_present:
             # make logical mask
             label_msk = K.equal(Ytrue_class, class_label)

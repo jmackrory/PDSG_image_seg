@@ -6,7 +6,7 @@ import re
 import imageio
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # type: ignore
 
 Hlist = [0, 240, 480, 1200, 2400, 10000]
 Wlist = [0, 320, 640, 1600, 3200, 20000]
@@ -213,8 +213,9 @@ def get_training_dicts(index_df, size_buckets=[0, 1], val_fold=0):
 def get_common_class_index(object_df, ispart_frac=0.5, Nclasses=50):
     # try to consider big features first.
     # JM: this seems backwards.
-    msk = object_df["proportionClassIsPart"] < ispart_frac
-    ind = object_df[msk]["index"].values
+    # msk = object_df["proportionClassIsPart"] < ispart_frac
+    # ind = object_df[msk].index.values
+    ind = object_df.sort_values("objectCount", ascending=False).index.values
     return ind[:Nclasses]
 
 
