@@ -58,3 +58,16 @@ And a small fraction are larger than 3200x2400
 To check GPU is available.
 
 - modify /etc/nvidia-container-runtime/config.toml from "@/sbin/ldconfig" to "/sbin/ldconfig"
+
+- mostly Tensorflow versions more recent than 2.10 seem to use different CUDA drivers, which do not match the host.  and so, the docker image does not find the GPU.
+
+
+# Aug 14
+- have gotten a Unet work.
+- added validation scoring
+- need to work on an input pipeline.  if the images are too large it fails.
+- binary encoding to try limit the output size.  concern is that it will struggle on rarer events.  this does allow much bigger class numbers.
+
+## Image Pipeline
+- randomly select subsets of each image of up to 512 x 512 or 256 x 256
+- keep augmented images data within folds
